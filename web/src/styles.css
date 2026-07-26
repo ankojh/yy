@@ -1,0 +1,748 @@
+/* Military olive on black. The palette is a field map and a briefing room: olive drab
+   panels, brass and bone type, and exactly two accent colours so the only things that
+   read as *coloured* are the two belligerents and whichever meter is about to kill one
+   of them. */
+:root {
+  --bg: #080a07;          /* near black, faintly green */
+  --panel: #12160f;       /* olive drab, deep */
+  --panel-2: #0d1009;     /* recessed wells and inputs */
+  --line: #2a3120;        /* hairline olive */
+  --line-2: #3d4630;      /* hover / emphasis */
+  --ink: #dde2cd;         /* bone */
+  --dim: #8b9375;         /* stencil */
+  --west: #b3c463;        /* Aurelia — pale olive */
+  --east: #cd7038;        /* Korsav — rust */
+  --good: #9dbf5a;        /* olive green */
+  --bad: #c8462f;         /* brick */
+  --warn: #cfa23c;        /* brass */
+  --spin: #8f7fbf;        /* propaganda violet, the one cool note */
+}
+
+* { box-sizing: border-box; }
+
+/* Used by outcome, run-controls, ignition — without this the end-of-war overlay
+   stays full-screen forever and hides the islands underneath. */
+.hidden { display: none !important; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Full-viewport column: main takes every pixel the header does not need. */
+.shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header { flex: 0 0 auto; }
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* Tall enough for the stacked mark — logo, gap, tagline — plus its padding. At 70 the
+     brand was two pixels over and the header clipped a row off the top of the drones. */
+  min-height: 76px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #10140d, #0a0d08);
+}
+
+/* Logo above, tagline under it — a stacked mark, not a lockup with a wordmark beside
+   it. The tagline is still the h1 for the document outline; it is just not sized like
+   a title, because the title is the drawing. */
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  gap: 2px;
+}
+.logo {
+  width: 96px;
+  height: 44px;
+  object-fit: contain;
+  flex: none;
+  border-radius: 4px;
+  filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.72));
+}
+h1.tagline {
+  margin: 0;
+  color: var(--dim);
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+}
+
+.status { display: flex; gap: 8px; align-items: center; }
+.pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  color: var(--dim);
+  background: var(--panel-2);
+}
+button.pill.ghost {
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 9px;
+  line-height: 1.45;
+}
+button.pill.ghost:hover { border-color: var(--line-2); color: var(--ink); }
+
+/* ---- three full-height columns ---- */
+main {
+  display: grid;
+  grid-template-columns: 292px minmax(0, 1fr) 292px;
+  gap: 10px;
+  padding: 10px;
+  flex: 1 1 auto;
+  min-height: 0; /* lets the grid shrink so the canvas can own the slack */
+}
+
+.nation {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 13px;
+  overflow-y: auto;
+  min-height: 0;
+  /* A dozen meters per side is a lot of scrolling, so the scrollbar is made quiet
+     rather than hidden — you still need to know there is more below. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+.nation::-webkit-scrollbar { width: 8px; }
+.nation::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+.nation h2 { margin: 0 0 2px; font-size: 15px; letter-spacing: 0.05em; }
+.nation .tag {
+  font-size: 9.5px;
+  color: var(--dim);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+#panel-west h2 { color: var(--west); }
+#panel-east h2 { color: var(--east); }
+
+.meter { margin-top: 10px; }
+.meter label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.track {
+  height: 6px;
+  background: var(--panel-2);
+  border: 1px solid #1d2316;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 3px;
+}
+.fill { height: 100%; width: 0; transition: width 0.5s ease; background: var(--good); }
+.fill.low { background: var(--bad); }
+.fill.tension { background: linear-gradient(90deg, var(--warn), var(--bad)); }
+
+/* Pressure bars fill upwards into danger, so none of them is ever green. */
+.fill.intl { background: linear-gradient(90deg, #6f7f5c, #cfa23c); }
+.fill.unrest { background: linear-gradient(90deg, #cfa23c, var(--bad)); }
+.fill.spin { background: linear-gradient(90deg, #4d4570, var(--spin)); }
+.fill.hot { box-shadow: 0 0 8px rgba(200, 70, 47, 0.75); }
+
+/* The butcher's bill, beside the tension bar. The only number on screen with no
+   ceiling, so it is a count and never a track. */
+.toll {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dim);
+  min-height: 20px;
+}
+.toll .lbl { text-transform: uppercase; letter-spacing: 0.12em; font-size: 10px; }
+.toll b { color: #e08a76; font-size: 14px; }
+.toll .split { font-size: 10px; opacity: 0.75; }
+
+.blurb {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+.creed {
+  margin: 4px 0 0;
+  font-size: 10px;
+  font-style: italic;
+  color: #6f7757;
+}
+.tag .model { color: var(--warn); letter-spacing: 0.08em; text-transform: none; }
+.block .d .pct { color: var(--ink); }
+.block .d.toll-line .n { color: #e08a76; }
+
+/* Setup sliders — same footprint as the readout meters they replace. */
+.meter.edit { margin-top: 8px; }
+.meter.edit .val { color: var(--ink); }
+.meter.edit input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  margin: 4px 0 0;
+  border-radius: 2px;
+  background: var(--panel-2);
+  border: 1px solid #1d2316;
+  cursor: pointer;
+}
+.meter.edit input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--ink);
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 0 1px var(--line-2);
+}
+.meter.edit input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--panel);
+  border-radius: 2px;
+  background: var(--ink);
+}
+#panel-west .meter.edit input[type="range"]::-webkit-slider-thumb { background: var(--west); }
+#panel-east .meter.edit input[type="range"]::-webkit-slider-thumb { background: var(--east); }
+#panel-west .meter.edit input[type="range"]::-moz-range-thumb { background: var(--west); }
+#panel-east .meter.edit input[type="range"]::-moz-range-thumb { background: var(--east); }
+
+/* Persistent effects: what is acting on this nation without anyone spending a turn. */
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 2px; }
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 1px 6px;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+  background: var(--panel-2);
+}
+.chip.bad { border-color: #59281c; color: #e08a76; }
+.chip.warn { border-color: #55431d; color: var(--warn); }
+.chip.good { border-color: #33501f; color: var(--good); }
+.chip.spin { border-color: #3d3559; color: #b6a6e0; }
+
+.block .d.hard { color: var(--ink); }
+.block .d .shield { color: var(--good); font-size: 10px; letter-spacing: 0; }
+
+.block { margin-top: 14px; }
+.block .d,
+.block .w {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--dim);
+  padding: 1px 0;
+}
+.block .w .pips { flex: 1; color: #5c6647; letter-spacing: -1px; overflow: hidden; }
+.block .w .n { color: var(--ink); min-width: 14px; text-align: right; }
+.block .w.spent { opacity: 0.32; }
+.block .w.spent .n { color: var(--dim); }
+.block .w.nuke .pips,
+.block .w.nuke .n { color: var(--warn); }
+.block .w.nuke.spent .pips,
+.block .w.nuke.spent .n { color: var(--dim); }
+
+/* ---- centre column: map, world meters, controls ---- */
+.theatre {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.world { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; flex: 0 0 auto; }
+.world label {
+  font-size: 10px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.outcome {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 40px;
+  background: rgba(6, 8, 5, 0.88);
+  border-radius: 6px;
+  font-size: 17px;
+  line-height: 1.6;
+  color: #e9eedc;
+}
+
+/* Controls now sit inside the centre column, so they are width-constrained and the
+   cards have to be much smaller than they were in a full-width strip. */
+.controls {
+  flex: 0 0 auto;
+  max-height: 30vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+.controls::-webkit-scrollbar { width: 8px; }
+.controls::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+
+.ignition, .run {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+}
+.ignition h2 {
+  margin: 0 0 9px;
+  font-size: 11px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+/* Title only. The context each of these needs is a fortnight of timeline, which does
+   not fit in a 150px box and was not being read when it was clamped into one — it
+   lives in the file the card opens instead. */
+.card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 9px 10px;
+  cursor: pointer;
+  text-align: left;
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+.card:hover { border-color: var(--line-2); background: #171d10; }
+.card.on { border-color: var(--warn); background: #1a1209; }
+.card .t { font-size: 11.5px; letter-spacing: 0.02em; }
+.card .chev { font-size: 9px; color: #5c6647; letter-spacing: 0.1em; }
+.card:hover .chev { color: var(--dim); }
+.card.on .chev { color: var(--warn); }
+.card.on .t::before { content: "✓ "; color: var(--warn); }
+
+.row { display: flex; gap: 8px; margin-top: 8px; }
+input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 12px;
+}
+input:focus { outline: none; border-color: var(--line-2); }
+input::placeholder { color: #6d7460; }
+
+button {
+  background: #1d2416;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  color: var(--ink);
+  padding: 7px 13px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+button:hover { border-color: #55613f; background: #242c1b; }
+button.primary {
+  background: #3f4f22;
+  border-color: #5d7233;
+  color: #eef3df;
+}
+button.primary:hover { background: #4a5d28; border-color: #748c42; }
+
+.run { display: flex; flex-direction: column; gap: 8px; }
+.run .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.run .row { margin-top: 0; }
+
+/* ---- stage: the map plus everything that floats over it ---- */
+/* Stage owns the height; canvas fills it absolutely so flex min-height:0 cannot
+   collapse the bitmap to 0×0 (which made islands and bubbles vanish). */
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 240px;
+  width: 100%;
+}
+#map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: block;
+}
+
+/* Speech sits directly above each island, matching the canvas island centres. */
+.bubble {
+  position: absolute;
+  bottom: 58%;
+  transform: translate(-50%, 10px);
+  width: 34%;
+  max-width: 320px;
+  padding: 10px 13px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  background: rgba(12, 15, 9, 0.95);
+  border: 1px solid var(--line-2);
+  backdrop-filter: blur(3px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.bubble.show { opacity: 1; transform: translate(-50%, 0); }
+.bubble.west { left: 23.5%; border-left: 2px solid var(--west); }
+.bubble.east { left: 76.5%; border-right: 2px solid var(--east); }
+.bubble.nuke {
+  border-color: var(--warn);
+  box-shadow: 0 0 34px rgba(207, 162, 60, 0.4);
+}
+
+/* Tail pointing down at the island that is speaking. */
+.bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  margin-left: -7px;
+  border: 7px solid transparent;
+  border-top-color: rgba(12, 15, 9, 0.95);
+  border-bottom: 0;
+}
+
+.bubble .who {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.bubble.west .who b { color: var(--west); }
+.bubble.east .who b { color: var(--east); }
+.bubble .who .act { color: var(--dim); }
+.bubble .verdict { margin-top: 6px; font-size: 10px; font-style: italic; color: var(--dim); }
+.bubble .verdict.bad { color: var(--bad); font-style: normal; }
+
+/* Damage numbers rise off the island that took the hit. */
+.floaters { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
+.floater {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-shadow: 0 1px 4px #000, 0 0 10px rgba(0, 0, 0, 0.95);
+  opacity: 0;
+  animation: rise-off 2.6s ease-out forwards;
+}
+.floater.up { color: var(--good); }
+.floater.down { color: #e07a62; }
+/* The dead do not read as a meter tick. Bigger, colder, and they linger. */
+.floater.dead {
+  color: #f0d0c4;
+  font-size: 14px;
+  letter-spacing: 0.03em;
+  animation-duration: 3.4s;
+}
+@keyframes rise-off {
+  0% { opacity: 0; transform: translate(-50%, 10px); }
+  12% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -52px); }
+}
+
+/* ---- the table, drawn on the water between the two islands ---- */
+.talks {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  width: min(430px, 46%);
+  z-index: 3;
+  padding: 9px 11px 10px;
+  border: 1px solid #4a5533;
+  border-radius: 6px;
+  background: rgba(10, 13, 8, 0.94);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(3px);
+  animation: fade-in 0.4s ease both;
+}
+.talks-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding-bottom: 6px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+}
+.talks-head .tag { color: var(--good); }
+.talks-head .warn { color: var(--bad); }
+
+/* Three columns so the two positions sit either side of the clause they are about,
+   in the same left/right order as the islands they belong to. */
+.talks .clause {
+  display: grid;
+  grid-template-columns: 74px 1fr 74px;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  padding: 2.5px 0;
+  color: var(--dim);
+}
+.talks .clause .t { text-align: center; color: var(--ink); font-size: 10.5px; }
+.talks .clause .t i { color: var(--warn); font-style: normal; font-size: 8.5px; }
+.talks .clause .w { text-align: left; }
+.talks .clause .e { text-align: right; }
+.talks .clause .demand { color: var(--bad); }
+.talks .clause .concede { color: var(--good); }
+.talks .clause.signed { opacity: 0.55; }
+.talks .clause.signed .t { text-decoration: line-through; }
+
+/* The world's voice, along the bottom of the map. */
+.ticker {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  max-width: 78%;
+  text-align: center;
+  font-size: 11.5px;
+  font-style: italic;
+  line-height: 1.5;
+  color: #c2b787;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
+  opacity: 0;
+  z-index: 2;
+  transition: opacity 0.4s ease;
+}
+.ticker.show { opacity: 1; }
+.ticker.alarm { color: #e07a62; font-style: normal; font-weight: 600; }
+
+/* ---- the briefing modal ---- */
+.intro {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(4, 6, 3, 0.9);
+  backdrop-filter: blur(4px);
+  animation: fade-in 0.35s ease both;
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.intro-card {
+  width: min(760px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #151a10, #0e1209);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  padding: 26px 30px 24px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.8);
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+.intro-card .tag {
+  font-size: 9.5px;
+  color: var(--dim);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.intro-card h2 {
+  margin: 6px 0 0;
+  font-size: 26px;
+  letter-spacing: 0.08em;
+  color: #eaf0da;
+}
+.intro-card .lede {
+  margin: 12px 0 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: #cdd4bb;
+}
+
+.steps {
+  margin: 18px 0 0;
+  padding: 0 0 0 20px;
+  display: grid;
+  gap: 9px;
+}
+.steps li {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+.steps li b { color: var(--ink); font-weight: 600; }
+.steps li em { color: var(--west); font-style: normal; }
+.steps::marker { color: var(--warn); }
+
+.intro-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.intro-grid p {
+  margin: 5px 0 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+.intro-grid b { color: var(--ink); font-weight: 600; }
+
+#btn-intro {
+  margin-top: 22px;
+  width: 100%;
+  padding: 11px;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+
+/* ---- the quarrel, and the files it produced ---- */
+.quarrel {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.lede.small { font-size: 12.5px; margin-top: 8px; }
+.lede.small b { color: var(--ink); }
+
+/* Two columns of "here is what we say happened", side by side and disagreeing. */
+.two-accounts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+.acct {
+  padding: 10px 12px;
+  border-radius: 5px;
+  background: var(--panel-2);
+  border-left: 2px solid var(--line-2);
+}
+.acct.west { border-left-color: var(--west); }
+.acct.east { border-left-color: var(--east); }
+.acct p { margin: 6px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--dim); }
+.acct .one-line { color: #cdd4bb; font-style: italic; }
+.acct .wound { color: #8d7f66; }
+
+button.link {
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--warn);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+}
+button.link:hover { background: none; border: 0; color: #e6c06a; text-decoration: underline; }
+
+.file .tag.sep {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.timeline {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+/* A rule down the left with a node per entry: this is a sequence, and it should read
+   as one at a glance rather than as four more paragraphs. */
+.timeline li {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dim);
+  padding-left: 12px;
+  border-left: 1px solid var(--line-2);
+  position: relative;
+}
+.timeline li::before {
+  content: "";
+  position: absolute;
+  left: -3.5px;
+  top: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.timeline .when {
+  color: var(--warn);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.clauses { display: grid; gap: 9px; margin-top: 10px; }
+.clause-row { font-size: 11.5px; line-height: 1.6; color: var(--dim); }
+.clause-row b { color: var(--ink); display: block; }
+.clause-row b i { color: var(--warn); font-style: normal; font-size: 9px; letter-spacing: 0.12em; }
+
+.file-actions { margin-top: 22px; }
+.file-actions button { flex: 1; padding: 10px; }
+#btn-dossier-close { flex: 0 0 auto; }
+
+@media (max-width: 1180px) {
+  main { grid-template-columns: 240px minmax(0, 1fr) 240px; }
+}

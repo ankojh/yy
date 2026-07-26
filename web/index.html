@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>war machines</title>
+    <!-- The mark is the brand now, in the tab as well as in the header. Cut square from
+         the header lockup and down to 128px: both source images are 2:1 or 3:1 and 1.5MB,
+         and a browser handed one of those squashes a pair of drones into sixteen pixels
+         of grey after downloading a megabyte to do it. One drone, cropped, reads. -->
+    <link rel="icon" type="image/png" href="/brand/favicon.png" />
+    <link rel="apple-touch-icon" href="/brand/favicon.png" />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <!-- Deliberately not remembered. No cookie, no localStorage: every load of this
+         page is somebody's first, and the rules are short enough to reread. -->
+    <div class="intro" id="intro">
+      <div class="intro-card" role="dialog" aria-modal="true" aria-labelledby="intro-title">
+        <div class="tag">a war you do not command</div>
+        <h2 id="intro-title">war machines</h2>
+        <p class="lede">
+          Two island nations hate each other. Two language models command them. A third
+          judges every move either one makes. You are none of the three.
+        </p>
+
+        <ol class="steps">
+          <li>
+            <b>Choose what the war is about.</b> Pick one or more of the cards below the
+            map — they stack, and a stacked war starts much hotter — or write your own.
+            Then <b>ignite</b>.
+          </li>
+          <li>
+            <b>Watch.</b> Each side declares one action per turn and holds the stage for
+            ten seconds: it speaks, the ordnance flies, air defences shoot down what they
+            can, and whatever gets through lands on a real place on the map and burns
+            there for the rest of the war.
+          </li>
+          <li>
+            <b>Interfere, if you like.</b> <em>inject</em> drops a new event on the table
+            mid-war. Both commanders see it on their next turn.
+          </li>
+        </ol>
+
+        <div class="quarrel">
+          <div class="tag">what they are actually fighting about</div>
+          <p class="lede small">
+            One country until sixty-one years ago. A commission drew the
+            <b>Kestrel Line</b> through the strait on its way out and put four fifths of
+            the gas on the northern side. Four hundred thousand people were moved. A
+            ferry was sunk with eighty-four aboard and answered with a verdict instead of
+            an apology. This year a survey found gas under Bellow Reef, on the line
+            neither of them signed.
+          </p>
+          <div class="two-accounts">
+            <div class="acct west">
+              <div class="tag">Aurelia — the Charter of Kestrel</div>
+              <p>
+                A government its people cannot remove is not a country. Korsav is a
+                garrison sitting on a population, and forty years of buying its gas has
+                not made it anything else.
+              </p>
+            </div>
+            <div class="acct east">
+              <div class="tag">Korsav — the Long Ledger</div>
+              <p>
+                Sovereignty is not granted by anyone's approval. Aurelian rights talk is
+                the etiquette of the party that took the shelf and then wrote the law
+                that made the taking lawful.
+              </p>
+            </div>
+          </div>
+          <button id="btn-quarrel" class="link">read the whole sixty-one years →</button>
+        </div>
+
+        <div class="intro-grid">
+          <div>
+            <div class="tag">the two countries are different</div>
+            <p>
+              Aurelia is rich, trades for a living, and answers to a free press. Korsav is
+              poor, heavily armed, and believed at home. Neither can fight the other's war.
+            </p>
+          </div>
+          <div>
+            <div class="tag">two pressures, pulling apart</div>
+            <p>
+              <b>International pressure</b> is what the world does to you — it taxes your
+              trade. <b>Public unrest</b> is what your own people do to you. Propaganda
+              quiets one by feeding the other.
+            </p>
+          </div>
+          <div>
+            <div class="tag">how it ends</div>
+            <p>
+              Integrity, morale or standing at zero. Unrest at a hundred and the
+              government falls. Somebody signs a capitulation — or, if a losing side sues
+              for terms and the clauses can be agreed, both of them sign an accord and
+              nobody loses at all.
+            </p>
+          </div>
+        </div>
+
+        <button id="btn-intro" class="primary">understood — take me to the map</button>
+      </div>
+    </div>
+
+    <div class="shell">
+      <header>
+        <!-- The mark carries the name on its own. The wordmark under it is a tagline,
+             not a title, so it sits below the logo rather than beside it. -->
+        <div class="brand">
+          <img
+            class="logo"
+            src="/brand/yudhyantra-logo-header.png"
+            alt="yudh yantra — two Y-shaped combat drones forming the YY logo"
+          />
+          <h1 class="tagline">war machines</h1>
+        </div>
+        <div class="status">
+          <span id="mode" class="pill">connecting</span>
+          <span id="turn" class="pill">turn 0</span>
+          <span id="phase" class="pill">briefing</span>
+          <button id="btn-help" class="pill ghost" title="what is this?">?</button>
+        </div>
+      </header>
+
+      <!-- Three full-height columns. The controls live inside the centre column rather
+           than in a strip underneath, so the two nation panels — which now carry a
+           dozen meters each — get the whole viewport to do it in. -->
+      <main>
+        <section class="nation" id="panel-west"></section>
+
+        <section class="theatre">
+          <div class="stage">
+            <canvas id="map"></canvas>
+            <!-- Speech sits over each island; damage floats off it; the world speaks
+                 along the bottom. -->
+            <div class="bubble west" id="bubble-west"></div>
+            <div class="bubble east" id="bubble-east"></div>
+            <div class="floaters" id="floaters"></div>
+            <!-- The table, when there is one. Sits over the strait between the two
+                 islands, because that is where it belongs. -->
+            <div class="talks hidden" id="talks"></div>
+            <div class="ticker" id="ticker"></div>
+            <div id="outcome" class="outcome hidden"></div>
+          </div>
+
+          <!-- Tension is the only thing left that belongs to the world; isolation is
+               earned per capital and is already drawn in both panels. The dead are a
+               world-level fact too, and the only number here with no ceiling. -->
+          <div class="world">
+            <div class="meter">
+              <label>tension</label>
+              <div class="track"><div class="fill tension" id="w-tension"></div></div>
+            </div>
+            <div class="toll" id="w-toll"></div>
+          </div>
+
+          <section class="controls">
+            <div class="ignition" id="ignition">
+              <h2>ignite the conflict — click a card to read the file</h2>
+              <div class="cards" id="cards"></div>
+              <div class="row">
+                <input id="custom" placeholder="or write your own casus belli…" />
+                <button id="btn-ignite" class="primary">ignite</button>
+              </div>
+            </div>
+
+            <div class="run hidden" id="run-controls">
+              <div class="buttons">
+                <button id="btn-step">step turn</button>
+                <button id="btn-run" class="primary">run to conclusion</button>
+                <button id="btn-pause">pause</button>
+                <button id="btn-reset">reset</button>
+              </div>
+              <div class="row">
+                <input id="inject" placeholder="inject an event mid-war…" />
+                <button id="btn-inject">inject</button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="nation" id="panel-east"></section>
+      </main>
+    </div>
+
+    <!-- One reusable file: an ignition dossier, or the sixty-one years. Filled from the
+         event stream, never from markup, so it can never disagree with the server. -->
+    <div class="intro hidden" id="dossier">
+      <div class="intro-card file" role="dialog" aria-modal="true" aria-labelledby="dossier-title">
+        <div class="tag" id="dossier-kicker"></div>
+        <h2 id="dossier-title"></h2>
+        <div id="dossier-body"></div>
+        <div class="row file-actions">
+          <button id="btn-dossier-pick" class="primary"></button>
+          <button id="btn-dossier-close">close</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
