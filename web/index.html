@@ -47,7 +47,7 @@
           <p class="lede small">
             One country until sixty-one years ago. A commission drew the
             <b>Kestrel Line</b> through the strait on its way out and put four fifths of
-            the gas on the northern side. Four hundred thousand people were moved. A
+            the gas on the western side. Four hundred thousand people were moved. A
             ferry was sunk with eighty-four aboard and answered with a verdict instead of
             an apology. This year a survey found gas under Bellow Reef, on the line
             neither of them signed.
@@ -117,9 +117,30 @@
           <h1 class="tagline">war machines</h1>
         </div>
         <div class="status">
+          <!-- The bench. Only ever shown when a recording is loaded: which war is
+               playing, how fast, and which turn to jump to. Filled from the reset
+               payload, so a build with no fixtures on disk simply never sees it. -->
+          <div class="replay hidden" id="replay">
+            <select id="replay-pick" title="which recorded match is playing"></select>
+            <select id="replay-seek" title="jump straight to a turn"></select>
+            <select id="replay-speed" title="playback speed">
+              <option value="0.5">0.5×</option>
+              <option value="1">1×</option>
+              <option value="2">2×</option>
+              <option value="4">4×</option>
+              <option value="8">8×</option>
+              <option value="16">16×</option>
+            </select>
+          </div>
           <span id="mode" class="pill">connecting</span>
           <span id="turn" class="pill">turn 0</span>
           <span id="phase" class="pill">briefing</span>
+          <!-- TEMPORARY. One click: load a recording, ignite it, run it. Nothing to
+               pick, nothing to spend. Delete this button, the `#btn-mock` block in
+               main.ts, and `.pill.temp` in styles.css to take it back out. -->
+          <button id="btn-mock" class="pill ghost temp hidden" title="play a recorded match — no API calls">
+            ▶ mock run
+          </button>
           <button id="btn-help" class="pill ghost" title="what is this?">?</button>
         </div>
       </header>
@@ -159,6 +180,10 @@
           <section class="controls">
             <div class="ignition" id="ignition">
               <h2>ignite the conflict — click a card to read the file</h2>
+              <!-- On the bench the war has already been fought, and no card on the deck
+                   can change which one plays. Better to say so here than to let somebody
+                   pick three and wonder why they got a fourth. -->
+              <p class="replay-note hidden" id="replay-note"></p>
               <div class="cards" id="cards"></div>
               <div class="row">
                 <input id="custom" placeholder="or write your own casus belli…" />

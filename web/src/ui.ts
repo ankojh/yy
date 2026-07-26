@@ -99,8 +99,8 @@ function setupPanel(n: Nation): string {
     slider(n.side, w.label, "arm", w.id, n.arsenal?.[w.id] ?? 0, w.id === "nuke" ? 5 : 30)
   ).join("");
 
-  return `<div class="tag">${n.side}ern island${commander(n)}</div>
-    <h2>${n.name}</h2>
+  return `<h2>${n.name}</h2>
+    ${commander(n)}
     ${n.blurb ? `<p class="blurb">${esc(n.blurb)}</p>` : ""}
     ${n.creed ? `<p class="creed">argues from ${esc(n.creed)}</p>` : ""}
     <div class="block"><div class="tag">opening position</div>${stats}</div>
@@ -171,8 +171,8 @@ function readoutPanel(n: Nation): string {
     return `<div class="${cls}"><span>${w.label}</span><span class="pips">${pips}</span><span class="n">${left}</span></div>`;
   }).join("");
 
-  return `<div class="tag">${n.side}ern island${commander(n)}</div>
-    <h2>${n.name}</h2>
+  return `<h2>${n.name}</h2>
+    ${commander(n)}
     ${status ? `<div class="chips">${status}</div>` : ""}
     ${meters}
     <div class="block"><div class="tag">pressure</div>${pressures}</div>
@@ -185,11 +185,19 @@ function readoutPanel(n: Nation): string {
     <div class="block"><div class="tag">arsenal</div>${arsenal}</div>`;
 }
 
-/** Which model is sitting in this chair. Shown because a match between two different
- *  models is only worth anything if you can see which was which. */
+/**
+ * Which model is sitting in this chair, on its own line under the country's name.
+ *
+ * Shown because a match between two different models is only worth anything if you can
+ * see which was which. It used to hang off the end of a "western island" label, which
+ * put a compass bearing on screen next to two islands drawn left and right and a lore
+ * that calls them something else again — so the label is gone and the model stands on
+ * its own. Nothing is drawn when the scripted cabinets are playing: there is no chair to
+ * name, and an empty line would only push the country's description down.
+ */
 function commander(n: Nation): string {
   const model = panel[n.side];
-  return model && model !== "mock" ? ` · <span class="model">${esc(model)}</span>` : "";
+  return model && model !== "mock" ? `<div class="chair">${esc(model)}</div>` : "";
 }
 
 /** Sliders must survive their own state echo — re-rendering mid-drag would fight the user. */
@@ -523,6 +531,78 @@ export function openQuarrel(
       .join("")}</div>`;
   $("btn-dossier-pick").classList.add("hidden");
   $("dossier").classList.remove("hidden");
+}
+
+/* ------------------------------------------------------------------ the bench */
+
+/** One recorded match, as the server describes it. */
+export interface Recording {
+  name: string;
+  title: string;
+  turns: number;
+  events: number;
+  outcome: string;
+  complete: boolean;
+  live: boolean;
+  dead: number;
+  marks: Array<{ turn: number; label: string }>;
+}
+
+export interface ReplayBlock {
+  name: string;
+  speed: number;
+  current: Recording;
+  available: Recording[];
+}
+
+const option = (value: string, text: string) =>
+  `<option value="${esc(value)}">${esc(text)}</option>`;
+
+/**
+ * The replay bar.
+ *
+ * Three controls and no more: which war, which turn, how fast. It exists so the UI can
+ * be worked on against a real match without a model being called, which means it is
+ * itself part of the UI being worked on — hence living in the header next to the mode
+ * pill rather than in a debug drawer somebody has to go and open.
+ *
+ * Shown only when a recording is loaded. A build serving live matches never sees it.
+ */
+export function renderReplay(block: ReplayBlock | null) {
+  const bar = $("replay");
+  const note = $("replay-note");
+  if (!block) {
+    bar.classList.add("hidden");
+    note.classList.add("hidden");
+    return;
+  }
+  bar.classList.remove("hidden");
+
+  $<HTMLSelectElement>("replay-pick").innerHTML =
+    block.available
+      .map((r) => option(r.name, `${r.name} — ${r.turns} turns · ${r.title}`))
+      .join("") +
+    // The way out. Named for what it costs, because it is the one control here that
+    // does cost something.
+    option("", "— stop replaying · fight a live match (spends API credit) —");
+  $<HTMLSelectElement>("replay-pick").value = block.name;
+
+  // Every turn is jumpable, but the ones worth naming get named: a turn where somebody
+  // sued for terms is the turn you want when you are styling the table.
+  $<HTMLSelectElement>("replay-seek").innerHTML =
+    option("", "jump to…") + block.current.marks.map((m) => option(String(m.turn), m.label)).join("");
+  $<HTMLSelectElement>("replay-seek").value = "";
+  $<HTMLSelectElement>("replay-speed").value = String(block.speed);
+
+  const ending = block.current.complete
+    ? esc(block.current.outcome)
+    : "this recording stops mid-war — it was never played to a verdict";
+  note.classList.remove("hidden");
+  note.innerHTML = `<b>replaying “${esc(block.current.name)}”</b> — ${esc(
+    block.current.title
+  )}. ${block.current.turns} turns, ${count(block.current.dead)} dead. The deck below is
+    live for reading the files, but the war is already chosen: <em>ignite</em> plays this
+    one back. <span class="dim">${ending}</span>`;
 }
 
 export { $ };

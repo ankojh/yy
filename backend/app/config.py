@@ -64,6 +64,15 @@ class Settings:
         self.turn_pause = float(os.getenv("TURN_PAUSE", "4.0"))  # between turns
         self.log_dir = Path(os.getenv("LOG_DIR", Path(__file__).resolve().parent.parent / "logs"))
         self._force_mock = os.getenv("MOCK", "").lower() in ("1", "true", "yes")
+        # The replay bench. `REPLAY=<name>` starts every connection on a recorded match
+        # instead of a live one, which is how the UI gets worked on without spending
+        # anything; `?replay=<name>` on the page URL overrides it per tab, and the picker
+        # in the header switches without a restart. Empty means fight it for real.
+        self.replay = os.getenv("REPLAY", "")
+        self.replay_speed = float(os.getenv("REPLAY_SPEED", "1") or 1)
+        self.fixtures = Path(
+            os.getenv("FIXTURES", Path(__file__).resolve().parent.parent / "fixtures")
+        )
 
     def model_for(self, side: str) -> str:
         """Which model commands this island. `mock` when nothing is being spent."""

@@ -16,7 +16,7 @@ from typing import Any, Dict
 PROFILES: Dict[str, Dict[str, Any]] = {
     "west": {
         "name": "Aurelia",
-        "blurb": "Northern maritime republic. Rich, exporting, and answerable to its own press.",
+        "blurb": "Maritime republic. Rich, exporting, and answerable to its own press.",
         # Opening position.
         "integrity": 100,
         "morale": 58,
@@ -50,7 +50,7 @@ PROFILES: Dict[str, Dict[str, Any]] = {
     },
     "east": {
         "name": "Korsav",
-        "blurb": "Southern military state. Poorer, armed to the teeth, and difficult to embarrass.",
+        "blurb": "Military state. Poorer, armed to the teeth, and difficult to embarrass.",
         "integrity": 100,
         "morale": 68,
         "military": 80,

@@ -72,7 +72,7 @@ TERMS = (
 
 DOCTRINE = {
     "west": (
-        "You are the war cabinet of Aurelia, a northern island republic. You are proud, "
+        "You are the war cabinet of Aurelia, the western island republic. You are proud, "
         "legalistic, and obsessed with how history will read your conduct. You would rather "
         "win slowly and cleanly than fast and dirty — but you will not be humiliated.\n"
         "Know your own country. You are rich and you fight on credit the world extends you: "
@@ -81,7 +81,7 @@ DOCTRINE = {
         "free, so your public turns on you fast and your propaganda persuades almost nobody."
     ),
     "east": (
-        "You are the high command of Korsav, a southern island state. You are pragmatic, "
+        "You are the high command of Korsav, the eastern island state. You are pragmatic, "
         "impatient, and deeply suspicious of international institutions, which you believe are "
         "instruments of Aurelian influence. You think a short brutal war costs fewer lives "
         "than a long principled one.\n"

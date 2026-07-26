@@ -245,7 +245,7 @@ export class WarMap {
    * number, which meant seven drones could visibly get through a wall that the
    * arithmetic said had stopped four of them.
    */
-  fire(from: Side, weapon: string, target: string, stopped = 0) {
+  fire(from: Side, weapon: string, target: string, stopped = 0, instant = false) {
     const to: Side = from === "west" ? "east" : "west";
     const attacker = this.theatres[from];
     const defender = this.theatres[to];
@@ -269,8 +269,12 @@ export class WarMap {
       });
     }
 
+    // `instant` backdates the launch to the moment the round would already have arrived,
+    // so the salvo lands on the next frame with no flight. Used when the bench is
+    // fast-forwarding through a war: the scar and the fires belong to the turn being
+    // jumped to, but nobody wants to watch eleven salvos cross the strait to get there.
     this.tracers.push({
-      from, weapon, domain, born: performance.now(),
+      from, weapon, domain, born: performance.now() - (instant ? fx.flight : 0),
       launch: [pad.x, pad.y], target: site, rounds, landed: false,
     });
   }

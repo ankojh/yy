@@ -100,6 +100,44 @@ button.pill.ghost {
 }
 button.pill.ghost:hover { border-color: var(--line-2); color: var(--ink); }
 
+/* TEMPORARY: the one-click mock run. Tinted so it never reads as part of the game's own
+   controls, and so it is obvious which button to delete later. */
+button.pill.ghost.temp {
+  color: var(--good);
+  border-color: color-mix(in srgb, var(--good) 42%, transparent);
+}
+button.pill.ghost.temp:hover { border-color: var(--good); color: var(--ink); }
+
+/* ---- the replay bench ----
+   Three selects dressed as pills, shown only when a recording is loaded. Deliberately
+   in the header rather than in a drawer: it is the thing you reach for every thirty
+   seconds while working on any of the rest of this. */
+.replay { display: flex; gap: 6px; align-items: center; }
+.replay select {
+  max-width: 260px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--dim);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+.replay select:hover { border-color: var(--line-2); color: var(--ink); }
+.replay select:focus-visible { outline: 1px solid var(--line-2); }
+#replay-speed { max-width: 62px; }
+
+/* The line under the ignition heading that says the war is already chosen. */
+.replay-note {
+  margin: -4px 0 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+.replay-note b { color: var(--ink); font-weight: 600; }
+.replay-note .dim { display: block; opacity: 0.62; }
+
 /* ---- three full-height columns ---- */
 main {
   display: grid;
@@ -187,7 +225,15 @@ main {
   font-style: italic;
   color: #6f7757;
 }
-.tag .model { color: var(--warn); letter-spacing: 0.08em; text-transform: none; }
+/* The model in this chair, directly under the country's name. Brass, monospace-ish and
+   small: it is a fact about the match rather than a fact about the country, and must
+   not compete with the name it sits beneath. */
+.chair {
+  margin: 1px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--warn);
+}
 .block .d .pct { color: var(--ink); }
 .block .d.toll-line .n { color: #e08a76; }
 

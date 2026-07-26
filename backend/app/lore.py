@@ -32,8 +32,8 @@ PARTITION: List[Dict[str, str]] = [
     {
         "when": "61 years ago",
         "what": (
-            "The Meridian Union — one country across both islands — dissolves. The north "
-            "holds the deepwater ports, the shipping registry and the banks; the south "
+            "The Meridian Union — one country across both islands — dissolves. The west "
+            "holds the deepwater ports, the shipping registry and the banks; the east "
             "holds the mines, the smelters and the men who worked them."
         ),
     },
@@ -50,7 +50,7 @@ PARTITION: List[Dict[str, str]] = [
         "what": (
             "The Anvil Removals. Four hundred and twelve thousand people cross the strait "
             "in eighteen months. Aurelia's records call it a population exchange. Korsav's "
-            "call it the clearing of the northern mining towns. Not one property claim, in "
+            "call it the clearing of the western mining towns. Not one property claim, in "
             "either direction, has ever been heard."
         ),
     },
@@ -59,7 +59,7 @@ PARTITION: List[Dict[str, str]] = [
         "what": (
             "The Meridian Cable — the Union's power interconnector, and the gas line laid "
             "beside it — is left in service and in nobody's clear ownership. Korsav ships "
-            "gas north through it. Aurelia meters it and sends the bill. Both have "
+            "gas west through it. Aurelia meters it and sends the bill. Both have "
             "threatened to cut it; neither has."
         ),
     },
@@ -112,8 +112,8 @@ ACCOUNTS: Dict[str, Dict[str, str]] = {
         ),
         "case": (
             "Korsav keeps a ledger, not a charter: everything owed and not paid. The line "
-            "was drawn by men leaving on a boat, and it handed the north the shelf that the "
-            "south dug. The Removals emptied Korsavi towns and the property was never "
+            "was drawn by men leaving on a boat, and it handed the west the shelf that the "
+            "east dug. The Removals emptied Korsavi towns and the property was never "
             "returned. Aurelian rights talk is the etiquette of the party that took the "
             "ports, the registry and the gas and then wrote the rules that made the taking "
             "lawful. Eighty-four people died on the Halcyon Seven and the answer was a "

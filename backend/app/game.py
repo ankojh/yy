@@ -47,7 +47,7 @@ IGNITIONS: Dict[str, Dict[str, Any]] = {
         ],
         "positions": {
             "west": "The reef sits inside the Kestrel Line. There is nothing to discuss and a great deal to drill.",
-            "east": "The line is not law. A field this size is not a windfall for the north, it is the ledger being paid.",
+            "east": "The line is not law. A field this size is not a windfall for the west, it is the ledger being paid.",
         },
         "tension": 12,
         # The only card that makes both economies richer for a moment. Everyone can
@@ -58,14 +58,14 @@ IGNITIONS: Dict[str, Dict[str, Any]] = {
         "label": "Envoy assassinated",
         "text": "Korsav's envoy is shot dead on an Aurelian quay. The gunman is dead. Nobody can say who sent him.",
         "timeline": [
-            {"when": "6 weeks ago", "what": "Korsav sends an envoy north for the first time in nine years, to talk about the cable tariff and nothing else."},
+            {"when": "6 weeks ago", "what": "Korsav sends an envoy west for the first time in nine years, to talk about the cable tariff and nothing else."},
             {"when": "3 weeks ago", "what": "Two rounds of talks produce a metering formula. Aurelian dockworkers picket the building daily."},
             {"when": "5 days ago", "what": "An Anvil deportees' association names the envoy in a pamphlet as the officer who cleared Ostrig in his twenties."},
             {"when": "yesterday", "what": "Three shots on the quay at Vaelport. The gunman is killed by security within the minute and carries no papers."},
         ],
         "positions": {
             "west": "A murder on Aurelian soil, by an Aurelian citizen, which Aurelia is investigating in the open.",
-            "east": "An envoy invited north under guarantee and shot in front of the men who guaranteed him.",
+            "east": "An envoy invited west under guarantee and shot in front of the men who guaranteed him.",
         },
         "tension": 30,
         "effects": {
@@ -194,8 +194,8 @@ IGNITIONS: Dict[str, Dict[str, Any]] = {
         "label": "Assets frozen",
         "text": "Aurelia freezes every Korsavi holding in its shipping registry and its banks, citing the reef objection as an unlawful threat.",
         "timeline": [
-            {"when": "61 years", "what": "The Union's shipping registry stayed in the north at partition. Half the southern merchant fleet has been flagged through Vaelport ever since, because there was nowhere else."},
-            {"when": "4 months ago", "what": "Korsav's new southern bloc opens a registry of its own. Reflagging is slow and most hulls have not moved."},
+            {"when": "61 years", "what": "The Union's shipping registry stayed in the west at partition. Half the eastern merchant fleet has been flagged through Vaelport ever since, because there was nowhere else."},
+            {"when": "4 months ago", "what": "Korsav's new trading bloc opens a registry of its own. Reflagging is slow and most hulls have not moved."},
             {"when": "2 weeks ago", "what": "Aurelia's treasury circulates a note on 'exposure to hostile state entities'. Nobody outside the building sees it."},
             {"when": "overnight", "what": "Ninety-one Korsavi-owned hulls are frozen at their moorings and the accounts behind them are locked. Crews are told to wait."},
         ],
@@ -215,7 +215,7 @@ IGNITIONS: Dict[str, Dict[str, Any]] = {
         "text": "Korsav's trading bloc closes its ports to Aurelian hulls overnight, citing 'safety'. Nine per cent of Aurelia's exports stop moving that morning.",
         "timeline": [
             {"when": "18 months ago", "what": "Aurelia raises the Meridian Cable metering tariff for the third time in four years."},
-            {"when": "6 months ago", "what": "Korsav signs a southern trading bloc into existence with four smaller states and its own registry."},
+            {"when": "6 months ago", "what": "Korsav signs a trading bloc into existence with four smaller states and its own registry."},
             {"when": "10 days ago", "what": "The bloc adopts a 'hull safety' standard that only Aurelian-registry ships fail."},
             {"when": "overnight", "what": "Every bloc port shuts to Aurelian hulls. Nine per cent of Aurelia's exports stop moving before breakfast."},
         ],
@@ -231,6 +231,44 @@ IGNITIONS: Dict[str, Dict[str, Any]] = {
         },
     },
 }
+
+
+def reset_payload() -> Dict[str, Any]:
+    """Everything the UI needs before a shot is fired: the deck, the quarrel, the panel.
+
+    Lives outside `Game` because the replay bench sends one too, and it has to send
+    *today's* deck and lore over a match recorded weeks ago — a stale transcript should
+    still open the dossiers the current code knows about, not the ones it was recorded
+    against. Two copies of this dict would diverge within a day.
+    """
+    return {
+        "ignitions": [
+            {
+                "id": key,
+                "label": card["label"],
+                "text": card["text"],
+                "timeline": card["timeline"],
+                "positions": card["positions"],
+            }
+            for key, card in IGNITIONS.items()
+        ],
+        "mock": settings.use_mock,
+        "max_turns": settings.max_turns,
+        "balance_version": BALANCE_VERSION,
+        # Who is sitting in which chair. Never hidden: a match between two different
+        # models is only interesting if you can see which was which.
+        "panel": settings.panel,
+        # The sixty-one-year-old quarrel, for the briefing.
+        "partition": PARTITION,
+        "accounts": ACCOUNTS,
+        "articles": {
+            k: {"title": v["title"], "dispute": v["dispute"], "core": v["core"]}
+            for k, v in ARTICLES.items()
+        },
+        # The UI holds every tooltip and bubble for exactly as long as the beat it
+        # belongs to, so pacing is configured in one place rather than two.
+        "reveal_ms": int(settings.reveal * 1000),
+    }
 
 
 class Game:
@@ -281,33 +319,7 @@ class Game:
             self._file = None
         self.state = initial_state()
         self.log = []
-        await self.emit(
-            "reset",
-            ignitions=[
-                {
-                    "id": key,
-                    "label": card["label"],
-                    "text": card["text"],
-                    "timeline": card["timeline"],
-                    "positions": card["positions"],
-                }
-                for key, card in IGNITIONS.items()
-            ],
-            mock=settings.use_mock,
-            max_turns=settings.max_turns,
-            balance_version=BALANCE_VERSION,
-            # Who is sitting in which chair. Never hidden: a match between two different
-            # models is only interesting if you can see which was which.
-            panel=settings.panel,
-            # The sixty-one-year-old quarrel, for the briefing.
-            partition=PARTITION,
-            accounts=ACCOUNTS,
-            articles={k: {"title": v["title"], "dispute": v["dispute"], "core": v["core"]}
-                      for k, v in ARTICLES.items()},
-            # The UI holds every tooltip and bubble for exactly as long as the beat it
-            # belongs to, so pacing is configured in one place rather than two.
-            reveal_ms=int(settings.reveal * 1000),
-        )
+        await self.emit("reset", **reset_payload())
         await self.emit_state()
 
     async def ignite(self, ids: List[str], custom: str = "") -> None:

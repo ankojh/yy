@@ -59,12 +59,12 @@ clauses are drawn from it, and the briefing shows it.
 
 Both islands were one country — the **Meridian Union** — until sixty-one years ago. On its
 way out, an arbitration commission drew the **Kestrel Line** through the strait and put four
-fifths of the **Anvil Shelf**'s gas on the northern side. Aurelia signed within the week.
+fifths of the **Anvil Shelf**'s gas on the western side. Aurelia signed within the week.
 Korsav never signed. In the eighteen months that followed, four hundred and twelve thousand
 people crossed the water — a population exchange in Aurelia's records, the clearing of the
-northern mining towns in Korsav's — and not one property claim from either direction has
+western mining towns in Korsav's — and not one property claim from either direction has
 ever been heard. The **Meridian Cable** was left in service and in nobody's clear ownership:
-Korsav ships gas north through it, Aurelia meters it and sends the bill. Nineteen years ago
+Korsav ships gas west through it, Aurelia meters it and sends the bill. Nineteen years ago
 an Aurelian cutter fired on the ferry **Halcyon Seven** off Bellow Reef; eighty-four dead,
 thirty-one of them children, and an Aurelian court found the captain acted within a
 reasonable apprehension of threat. Korsav has asked for an apology every year since. This
@@ -246,6 +246,55 @@ Balance work runs in a batch:
 MOCK=1 BEAT=0 REVEAL=0 TURN_PAUSE=0 ./.venv/bin/python -m scripts.simulate 40
 ```
 
+## The bench
+
+Working on the frontend used to mean fighting a war to look at it. The UI is a fold over
+the event stream, which makes a match log a complete recording of a session: play the
+events back in order, at the cadence the live loop would have used, and nothing downstream
+can tell the difference. No model is called, no key is needed, and the same war plays
+identically as many times as you want to look at it.
+
+```bash
+REPLAY=accord ./.venv/bin/uvicorn app.main:app --port 8077
+open 'http://localhost:5173/?replay=nuclear&speed=8'    # or pick it per tab
+```
+
+Either way you get a picker in the header: which recording, how fast, and **jump to a
+turn**. That last one is the point of the whole thing. You are styling the negotiating
+board and the talks open on turn six; a jump replays the stream up to turn six at once —
+the only correct way to arrive at a turn, since the UI is a fold — behind a flag that
+suppresses the transient half of it, so thirty seconds of bubbles and floaters and eleven
+salvos do not fly past on the way. What lands is the map, the meters, the board and the
+last line of the ticker, exactly as they would look if you had watched.
+
+Five recordings ship in `backend/fixtures/`, chosen by what they make the UI *do* rather
+than by how good a war they are — between them they reach every branch the frontend draws:
+
+| | | |
+|---|---|---|
+| `accord` | 10 turns | the table works: three rounds, five clauses signed, nobody loses |
+| `nuclear` | 8 turns | a warhead, two atrocities, 77,251 dead — the numbers at their largest |
+| `attrition` | 12 turns | the full distance and ten different tools, ending in capitulation |
+| `surrender` | 7 turns | somebody quits: the ending that arrives as a move, not as a meter |
+| `nano` | 5 turns | **real model prose** — gpt-5-nano vs gpt-4.1-nano, cut short at the table |
+
+A fixture is an ordinary match log. Anything `logs/` collects can be dropped into
+`fixtures/` and replayed, and `scripts/make_fixtures.py` regenerates the four seeded ones
+and prints what each still reaches. Keep `nano`: mock prose comes out of a format string,
+and it is the real transcript that finds the layout bugs a canned two-clause sentence never
+will — which is also why it is the one recording that cannot be regenerated.
+
+Two things never come from the recording. The ignition deck and the quarrel are always
+built from today's code, so a log recorded before a card existed still opens the dossiers
+the current build knows about; and old state dumps are re-validated on load, so fields that
+did not exist when the log was written arrive with the defaults a fresh match would have
+had. The three chairs *are* read back off the log — who played which island is a fact about
+that match, not about this build, and the panel labels say so.
+
+The one branch no fixture reaches is a `civilian` strike: the scripted commander never
+picks that target, so no seeded recording can cover the protected-place path. It is
+reachable live, and it is the only thing left on this bench you still have to pay to see.
+
 ## Config
 
 | var | default | |
@@ -261,6 +310,9 @@ MOCK=1 BEAT=0 REVEAL=0 TURN_PAUSE=0 ./.venv/bin/python -m scripts.simulate 40
 | `TURN_PAUSE` | `4.0` | seconds between turns |
 | `BEAT` | `0.6` | short punctuation pauses |
 | `MOCK` | — | `1` forces scripted agents even with a key |
+| `REPLAY` | — | name of a recording in `fixtures/` ⇒ every connection is a replay |
+| `REPLAY_SPEED` | `1` | playback rate; `?replay=` and `?speed=` on the page URL win |
+| `FIXTURES` | `backend/fixtures` | where recordings are looked up |
 
 `REVEAL` is the pacing knob that matters. One action gets ten seconds: the statement goes
 up, the ordnance flies, the damage lands, and the bubble stays readable for all of it. The
@@ -280,7 +332,9 @@ backend/app/
   engine.py    deterministic mechanics; owns all numbers, including the table
   agents.py    two commanders + the arbiter, each with a scripted fallback
   game.py      ignition dossiers, paced turn loop, event stream
+  replay.py    the bench — recordings, turn cuts, jumps, reconstructed pacing
   main.py      FastAPI websocket
+backend/fixtures/   five recorded matches, committed; see "The bench"
 web/src/
   terrain.ts   island generation: relief, rivers, forest, farmland, roads, cities, airbase, port
   canvas.ts    the theatre — cached terrain, site-targeted ordnance, interception, fires, smoke
@@ -288,8 +342,9 @@ web/src/
   main.ts      websocket + dispatch
 ```
 
-The UI is a fold over the event stream, so live and replay are the same code path. Adding a
-mechanic means a tool schema, an engine branch, and one line in `ui.ts`.
+The UI is a fold over the event stream, so live and replay are the same code path — that is
+what the bench above is built on. Adding a mechanic means a tool schema, an engine branch,
+and one line in `ui.ts`.
 
 Strikes are aimed at **places**. The engine says `civilian`; the renderer picks the
 least-damaged town on that island, flies the round to it from the attacker's actual
@@ -302,9 +357,9 @@ is on fire.
 
 - Cooldowns are per-nation but not surfaced in the UI — an agent's unavailable tools are
   invisible to you. The same is true of what it cannot afford.
-- No persistence, no replay storage, no ELO. One match per websocket connection, and no
-  harness yet for scoring model A against model B over a run of matches with the chairs
-  swapped, which is the obvious thing to do with three chairs.
+- No ELO. One match per websocket connection, and no harness yet for scoring model A
+  against model B over a run of matches with the chairs swapped, which is the obvious thing
+  to do with three chairs. Matches are recorded and replayable, which is half of it.
 - The arbiter is injectable in principle: a commander that writes its rationale to persuade
   the *arbiter* rather than justify its action is playing a different game. Unhandled.
 - Against the scripted reference policy over 40 seeded matches: Aurelia loses 17, Korsav
