@@ -61,11 +61,19 @@ class MatchLog:
 
         p = ev.payload
         if ev.type == "ignition":
-            self._say(f"**Casus belli:** {', '.join(p.get('cards', []))}\n")
+            self._say(f"**Council action:** {', '.join(p.get('cards', []))}\n")
             for g in p.get("grievances", []):
                 self._say(f"> {g}\n")
         elif ev.type == "injection":
             self._say(f"> _injected:_ {p.get('text', '')}\n")
+        elif ev.type in ("support", "support_response"):
+            self._say(
+                f"> _council support · {p.get('label', '')} · ${p.get('cost', 0)}B:_ "
+                f"{p.get('text', '')}\n"
+            )
+        elif ev.type == "support_request":
+            request = p.get("request") or {}
+            self._say(f"> _request to the council:_ {request.get('text', '')}\n")
         elif ev.type == "turn_started":
             self._say(f"\n## Turn {p.get('turn')}\n")
         elif ev.type == "decision":

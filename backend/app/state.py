@@ -76,23 +76,20 @@ class Nation(BaseModel):
     name: str
     blurb: str = ""
     creed: str = ""         # the founding story this country argues from
-    # Ways to lose. Any of the first three hitting zero ends the war; unrest ends it
-    # by reaching one hundred instead.
-    morale: int = 60        # will to fight on
+    # Legacy fields remain parseable so old recordings still load. New matches expose
+    # and resolve only infrastructure, military, treasury, unrest, and pressure.
+    morale: int = 60
     military: int = 70      # capacity to act; spent by every offensive move
-    standing: int = 70      # international legitimacy; zero means total isolation
+    standing: int = 70
     integrity: int = 100    # infrastructure and territory still intact
-    # The war economy. Output pays for the war; the treasury is what you actually have.
-    gdp: int = 70           # economic output index, 0..100
-    # What the country was worth before the first shot. Output recovers towards this
-    # and never past it, so a bombed economy is permanently a smaller one.
+    gdp: int = 70
     gdp_base: int = 70
     budget: int = 80        # treasury, in $B. Weapons and operations are bought out of it.
     # The two pressures. International is what the world does to you; public is what
     # your own people do to you. Both are per-nation and both are earned separately.
     intl_pressure: int = 0  # 0..100. At 100 you are a pariah and your standing collapses.
     unrest: int = 10        # 0..100. At 100 the government falls and the war is over.
-    propaganda: int = 30    # 0..100 standing capability: how loud the state's own voice is.
+    propaganda: int = 30
     # The bill nobody's meter shows. Cumulative civilian dead on this nation's soil —
     # not a way to lose, but the reason its streets fill and the reason the other side
     # has something to take to the council.
@@ -146,19 +143,11 @@ class Nation(BaseModel):
                 return "grumbling"
             return "quiet"
 
-        # Propaganda does not merely calm the home front — it corrupts what the enemy's
-        # analysts can read off it. A well-spun country looks calmer than it is.
-        apparent_unrest = self.unrest * (1 - min(0.45, self.spin_strength() * 0.4))
-
         return {
             "name": self.name,
-            "morale": band(self.morale),
             "military": band(self.military),
-            "standing": band(self.standing),
-            "integrity": band(self.integrity),
-            "economy": band(self.gdp),
-            # Their streets are visible from a distance, but only through their own media.
-            "public_mood": rising(apparent_unrest),
+            "infrastructure": band(self.integrity),
+            "public_mood": rising(self.unrest),
             # The one number that is never hidden. Bodies are counted by everybody.
             "civilian_dead": self.casualties,
             # Sanctions, condemnation and embargo are matters of public record.
@@ -168,7 +157,6 @@ class Nation(BaseModel):
             "visibly_hardened": sorted(d for d, t in self.effects.shield.items() if t > 0),
             "under_blockade": self.effects.blockaded > 0,
             "under_sanctions": self.effects.sanctioned > 0,
-            "running_a_propaganda_campaign": self.effects.spin > 0,
             "strike_streak": self.strike_streak,
         }
 
@@ -242,6 +230,18 @@ class Talks(BaseModel):
         }
 
 
+class CouncilRequest(BaseModel):
+    """One island asking the neutral council for a specific, priced package."""
+
+    id: str
+    side: Side
+    kind: str
+    label: str
+    cost: int
+    text: str
+    turn: int
+
+
 class World(BaseModel):
     turn: int = 0
     tension: int = 10        # how hot the conflict is
@@ -256,6 +256,11 @@ class World(BaseModel):
     talks_cooldown: int = 0
     talks_held: int = 0      # how many rounds of negotiation this war has already burned
     outcome: Optional[str] = None
+    # The player chairs a neutral international council. It can back either or both
+    # belligerents, but only through finite grants; it never receives a combat turn.
+    council_budget: int = 72  # billions of US dollars
+    council_history: List[Dict[str, Any]] = Field(default_factory=list)
+    council_request: Optional[CouncilRequest] = None
 
 
 def _nation(side: str) -> Nation:

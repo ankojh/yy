@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 120" role="img" aria-labelledby="title desc">
+  <title id="title">Flag of Korsav</title>
+  <desc id="desc">A rust-red field with a dark central standard edged in gold and bearing three ivory lozenges.</desc>
+  <rect width="180" height="120" fill="#9b432c"/>
+  <!-- A ceremonial central standard, rather than a familiar national tricolour. -->
+  <rect x="55" width="8" height="120" fill="#d2a43e"/>
+  <rect x="63" width="54" height="120" fill="#26372d"/>
+  <rect x="117" width="8" height="120" fill="#d2a43e"/>
+  <!-- Three provinces carried forward from the old Meridian Union. -->
+  <g fill="#eee7d3">
+    <path d="m90 18 13 14-13 14-13-14Z"/>
+    <path d="m90 46 13 14-13 14-13-14Z"/>
+    <path d="m90 74 13 14-13 14-13-14Z"/>
+  </g>
+</svg>

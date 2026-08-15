@@ -2,7 +2,7 @@
 
 from app.engine import BLOCKADE_TURNS, SANCTION_TURNS, apply_action, apply_upkeep
 from app.state import Action, initial_state
-from app.tools import available_tools
+from app.tools import available_tools, strike_price
 
 
 def act(side, tool, **args):
@@ -100,40 +100,25 @@ def test_credible_appeal_sanctions_the_enemy():
     assert state.east.effects.sanctioned == SANCTION_TURNS
 
 
-def test_sanctions_double_the_standing_price_of_striking():
-    def standing_lost(sanctioned: bool) -> int:
-        state = initial_state()
-        if sanctioned:
-            state.west.effects.sanctioned = SANCTION_TURNS
-        before = state.west.standing
-        apply_action(
-            state, act("west", "strike", weapon="cruise_missile", target="infrastructure"), None
-        )
-        return before - state.west.standing
-
-    assert standing_lost(True) > standing_lost(False)
+def test_sanctions_raise_the_dollar_price_of_striking():
+    assert strike_price("cruise_missile", sanctioned=True) > strike_price("cruise_missile")
 
 
 # ---------------------------------------------------------------- address_public
 
 
-def test_morale_buffer_absorbs_damage_before_the_public_feels_it():
+def test_addressing_the_public_directly_lowers_unrest():
     state = initial_state()
+    state.east.unrest = 60
     apply_action(state, act("east", "address_public"), None)
-    buffered, morale = state.east.effects.morale_buffer, state.east.morale
-    assert buffered > 0
-
-    apply_action(state, act("west", "strike", weapon="drone_swarm", target="civilian"), None)
-    assert state.east.morale == morale                 # public feels nothing yet
-    assert state.east.effects.morale_buffer < buffered  # the buffer took it
+    assert state.east.unrest < 60
 
 
-def test_morale_damage_passes_through_once_the_buffer_is_empty():
+def test_civilian_damage_reaches_public_unrest_directly():
     state = initial_state()
-    state.east.effects.morale_buffer = 0
-    before = state.east.morale
+    before = state.east.unrest
     apply_action(state, act("west", "strike", weapon="drone_swarm", target="civilian"), None)
-    assert state.east.morale < before
+    assert state.east.unrest > before
 
 
 # ---------------------------------------------------------------- hold
@@ -151,12 +136,12 @@ def test_hold_restores_readiness_and_clears_fatigue():
     assert state.west.cooldowns["blockade"] == 2  # refit burns cooldowns down faster
 
 
-def test_hold_costs_morale():
+def test_hold_does_not_change_legacy_morale():
     state = initial_state()
     before = state.west.morale
     state.west.effects.morale_buffer = 0
     apply_action(state, act("west", "hold"), None)
-    assert state.west.morale < before
+    assert state.west.morale == before
 
 
 # ---------------------------------------------------------------- cooldowns

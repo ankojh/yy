@@ -282,9 +282,9 @@ export class WarMap {
   /* ------------------------------------------------------------- geometry */
 
   private place(side: Side, w: number, h: number): Place {
-    // The centres are fixed at 23.5% / 76.5% because the speech bubbles and the damage
-    // floaters are positioned in CSS against the same two numbers. The radius is capped
-    // so that two islands at full coastal reach still leave water between them.
+    // The centres are fixed at 23.5% / 76.5% because the speech bubbles are positioned
+    // in CSS against the same two numbers. The radius is capped so that two islands at
+    // full coastal reach still leave water between them.
     const r = Math.min(w * 0.19, h * 0.42);
     return { cx: side === "west" ? w * 0.235 : w * 0.765, cy: h * 0.52, r };
   }

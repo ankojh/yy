@@ -150,7 +150,6 @@ def test_a_school_costs_the_attacker_more_abroad_than_a_substation():
     strike(plain, target="civilian")
     strike(protected, target="civilian")
     assert protected.west.intl_pressure > plain.west.intl_pressure
-    assert protected.west.standing < plain.west.standing
 
 
 def test_the_place_table_is_deterministic():

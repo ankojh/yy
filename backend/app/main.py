@@ -88,6 +88,10 @@ async def ws(socket: WebSocket) -> None:
                 stop()
             elif command == "inject":
                 await game.inject(msg.get("text", ""))
+            elif command == "support":
+                await game.support(
+                    str(msg.get("request_id") or ""), msg.get("approved") is True
+                )
             elif command == "reset":
                 stop()
                 await game.reset()

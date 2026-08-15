@@ -1,12 +1,10 @@
 import type { Article, GameEvent, GameState, Nation, Side, Talks } from "./types";
 import { WEAPONS, WEAPON_BY_ID } from "./types";
 
-/** The four meters you lose the war by emptying. */
+/** The two direct measures of a state's ability to keep fighting. */
 const METERS: Array<[keyof Nation, string]> = [
-  ["integrity", "integrity"],
-  ["morale", "morale"],
+  ["integrity", "infrastructure"],
   ["military", "military"],
-  ["standing", "standing"],
 ];
 
 /**
@@ -17,7 +15,6 @@ const METERS: Array<[keyof Nation, string]> = [
 const PRESSURES: Array<[keyof Nation, string, string]> = [
   ["intl_pressure", "international pressure", "intl"],
   ["unrest", "public unrest", "unrest"],
-  ["propaganda", "state propaganda", "spin"],
 ];
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -37,6 +34,12 @@ const count = (n: number) => n.toLocaleString("en-US");
  * treasury and the arithmetic stays legible.
  */
 const usd = (n: number) => `$${Math.round(n).toLocaleString("en-US")}B`;
+
+const flag = (n: Nation) => `<div class="nation-title">
+    <img class="nation-flag" src="/flags/${n.side === "west" ? "aurelia" : "korsav"}.svg"
+         alt="Flag of ${esc(n.name)}" />
+    <h2>${esc(n.name)}</h2>
+  </div>`;
 
 /**
  * Reference data that arrives once, on reset, and never changes during a match: which
@@ -64,6 +67,7 @@ export function setDwell(revealMs: number) {
 
 /** "cruise missile → military", or "" for moves with no target. */
 function detailOf(tool: string, args: Record<string, any> = {}): string {
+  if (tool === "propaganda") return "narrative warfare";
   const bits = [
     args.weapon ? WEAPON_BY_ID[args.weapon]?.label ?? args.weapon : "",
     args.target ?? "",
@@ -86,12 +90,9 @@ function setupPanel(n: Nation): string {
     slider(n.side, label, "field", key as string, n[key] as number, 100)
   ).join("");
 
-  // The economy and the home front are opening positions too — a rich nervous republic
-  // and a poor obedient one are the same sliders set differently.
+  // Money and the home front are the only non-military opening controls.
   const country = [
-    slider(n.side, "output (GDP)", "field", "gdp", n.gdp, 100),
     slider(n.side, "treasury ($B)", "field", "budget", n.budget, 300),
-    slider(n.side, "state propaganda", "field", "propaganda", n.propaganda, 100),
     slider(n.side, "public unrest", "field", "unrest", n.unrest, 100),
   ].join("");
 
@@ -99,7 +100,7 @@ function setupPanel(n: Nation): string {
     slider(n.side, w.label, "arm", w.id, n.arsenal?.[w.id] ?? 0, w.id === "nuke" ? 5 : 30)
   ).join("");
 
-  return `<h2>${n.name}</h2>
+  return `${flag(n)}
     ${commander(n)}
     ${n.blurb ? `<p class="blurb">${esc(n.blurb)}</p>` : ""}
     ${n.creed ? `<p class="creed">argues from ${esc(n.creed)}</p>` : ""}
@@ -127,11 +128,7 @@ function readoutPanel(n: Nation): string {
     </div>`;
   }).join("");
 
-  // The ledger. Output is capped by the infrastructure still standing under it, which
-  // is why the ceiling is worth showing next to the number.
-  const ceiling = Math.min(n.gdp_base ?? 100, n.integrity);
-  const economy = `<div class="d"><span>output</span><span>${n.gdp} / ${ceiling}</span></div>
-    <div class="d"><span>treasury</span><span class="pct">${usd(n.budget)}</span></div>`;
+  const economy = `<div class="d"><span>treasury</span><span class="pct">${usd(n.budget)}</span></div>`;
 
   // Defences are shown as what they actually do — the share of an incoming salvo that
   // gets shot down — rather than as a bare number nobody can price. The percentage is
@@ -154,8 +151,6 @@ function readoutPanel(n: Nation): string {
     fx.blockaded > 0 ? `<span class="chip bad">blockaded ${fx.blockaded}t</span>` : "",
     fx.sanctioned > 0 ? `<span class="chip bad">sanctioned ${fx.sanctioned}t</span>` : "",
     fx.deficit_turns > 0 ? `<span class="chip bad">bankrupt ${fx.deficit_turns}t</span>` : "",
-    fx.spin > 0 ? `<span class="chip spin">broadcasting ${fx.spin}t</span>` : "",
-    fx.morale_buffer > 0 ? `<span class="chip good">resolve +${fx.morale_buffer}</span>` : "",
     n.strike_streak >= 2
       ? `<span class="chip bad">forces spent</span>`
       : n.strike_streak === 1
@@ -171,7 +166,7 @@ function readoutPanel(n: Nation): string {
     return `<div class="${cls}"><span>${w.label}</span><span class="pips">${pips}</span><span class="n">${left}</span></div>`;
   }).join("");
 
-  return `<h2>${n.name}</h2>
+  return `${flag(n)}
     ${commander(n)}
     ${status ? `<div class="chips">${status}</div>` : ""}
     ${meters}
@@ -180,7 +175,7 @@ function readoutPanel(n: Nation): string {
       <div class="d toll-line"><span>civilians and service dead</span>
         <span class="n">${count(n.casualties ?? 0)}</span></div>
     </div>
-    <div class="block"><div class="tag">war economy</div>${economy}</div>
+    <div class="block"><div class="tag">war funds</div>${economy}</div>
     <div class="block"><div class="tag">air, sea and network defence</div>${defenses}</div>
     <div class="block"><div class="tag">arsenal</div>${arsenal}</div>`;
 }
@@ -211,7 +206,8 @@ export function renderState(state: GameState) {
     $("panel-east").innerHTML = build(state.east);
     setupShown = briefing;
   }
-  $("w-tension").style.width = `${state.world.tension}%`;
+  $("council-funds").innerHTML = `<span class="lbl">council funds</span>
+    <b>${usd(state.world.council_budget ?? 0)}</b>`;
   // The one world-level number that is not already drawn twice in the panels. Isolation
   // used to sit here as well and said nothing the two pressure bars did not.
   const dead = (state.west.casualties ?? 0) + (state.east.casualties ?? 0);
@@ -281,7 +277,6 @@ function renderTalks(state: GameState) {
     </div>${rows}`;
 }
 
-const ISLAND_X: Record<Side, string> = { west: "23.5%", east: "76.5%" };
 const hideTimers: Record<string, number> = {};
 
 /** A side speaks. Its bubble sits over its island until the other side answers. */
@@ -314,36 +309,6 @@ export function setVerdict(side: Side, reason: string, bad: boolean) {
   el.appendChild(line);
 }
 
-/** What a delta is called on screen, and which direction of it is bad news. */
-const FIELD_LABEL: Record<string, string> = {
-  intl_pressure: "isolation",
-  unrest: "unrest",
-  gdp: "output",
-  budget: "treasury",
-  propaganda: "propaganda",
-  casualties: "dead",
-};
-const RISING_IS_BAD = new Set(["intl_pressure", "unrest", "casualties"]);
-
-/**
- * Damage rises off whichever island actually took it.
- *
- * A turn can now move seven meters at once, so the vertical offset is stepped by index
- * rather than jittered — at random the lines landed on top of each other and on the
- * speech bubble, and a turn's consequences were unreadable exactly when they mattered.
- */
-export function floater(side: Side, text: string, good: boolean, index = 0, grave = false) {
-  const host = $("floaters");
-  const el = document.createElement("div");
-  el.className = `floater ${good ? "up" : "down"}${grave ? " dead" : ""}`;
-  el.textContent = text;
-  el.style.left = ISLAND_X[side];
-  el.style.top = `${58 + (index % 6) * 5.5}%`;
-  el.style.animationDelay = `${index * 90}ms`;
-  host.appendChild(el);
-  window.setTimeout(() => el.remove(), 2900 + index * 90);
-}
-
 export function ticker(text: string, alarm = false) {
   const el = $("ticker");
   el.className = `ticker show${alarm ? " alarm" : ""}`;
@@ -363,6 +328,15 @@ export function renderEvent(ev: GameEvent, nameOf: (s: Side) => string) {
       ticker(p.text, true);
       break;
 
+    case "support_request":
+      ticker(p.request?.text ?? "An island has asked the Council for help.", true);
+      break;
+
+    case "support": // Older recordings used this event name.
+    case "support_response":
+      ticker(`${p.text}  ·  ${usd(p.remaining)} remains`, p.approved && p.kind === "arms");
+      break;
+
     case "message":
       showBubble(p.side, p.name, detailOf(p.tool, p.args), p.text, p.args?.weapon === "nuke");
       break;
@@ -371,28 +345,9 @@ export function renderEvent(ev: GameEvent, nameOf: (s: Side) => string) {
       setVerdict(p.side, p.reason ?? "", !p.effective);
       break;
 
-    case "deltas": {
-      // Both capitals can take damage from one action, and each side's lines have to
-      // stack independently or they interleave into nonsense.
-      const seen: Record<string, number> = { west: 0, east: 0 };
-      for (const d of p.deltas as any[]) {
-        const label = FIELD_LABEL[d.field] ?? d.field;
-        const rising = d.delta > 0;
-        const good = RISING_IS_BAD.has(d.field) ? !rising : rising;
-        // Two deltas are not meter ticks and must not be read as one. The dead are a
-        // count of people; the treasury is money, and a bare "-18" next to a row of bars
-        // that top out at 100 invites you to read a sortie as eighteen per cent of
-        // something.
-        const text =
-          d.field === "casualties"
-            ? `${nameOf(d.side)} — ${count(Math.abs(d.delta))} dead`
-            : d.field === "budget"
-              ? `${nameOf(d.side)} ${label} ${rising ? "+" : "−"}${usd(Math.abs(d.delta))}`
-              : `${nameOf(d.side)} ${label} ${rising ? "+" : ""}${d.delta}`;
-        floater(d.side, text, good, seen[d.side]++, d.field === "casualties");
-      }
-      break;
-    }
+    // `deltas` is deliberately not drawn. The numbers it carries are already on screen
+    // in both nation panels, and a turn's worth of them rising off the islands buried
+    // the one thing over the map worth reading: what the commanders actually said.
 
     case "note":
       ticker(p.text, true);
@@ -413,7 +368,6 @@ export function clearStage() {
     $(`bubble-${s}`).classList.remove("show");
     $(`bubble-${s}`).innerHTML = "";
   }
-  $("floaters").innerHTML = "";
   $("ticker").classList.remove("show");
   $("talks").classList.add("hidden");
   $("w-toll").innerHTML = "";
@@ -433,12 +387,10 @@ let cards: Ignition[] = [];
 let picked: Set<string> = new Set();
 
 /**
- * The ignition grid.
+ * The council policy grid.
  *
- * Card faces carry the title and nothing else. A paragraph of context clamped to four
- * lines in a 150px box is a paragraph nobody reads, and each of these incidents has a
- * fortnight behind it that explains the war that follows — so the context moves into a
- * file you open, and the grid goes back to being a list of choices.
+ * Card faces carry the title and nothing else. Each action has a history and two
+ * incompatible readings, so the context lives in the resolution file opened on demand.
  */
 export function renderIgnitionCards(list: Ignition[], selected: Set<string>) {
   cards = list;
@@ -472,17 +424,17 @@ const timeline = (rows: Array<{ when: string; what: string }>) =>
     .map((r) => `<li><span class="when">${esc(r.when)}</span><span>${esc(r.what)}</span></li>`)
     .join("")}</ol>`;
 
-/** One incident, with the fortnight that produced it and what each capital says it was. */
+/** One council action, with its context and what each capital says the signature means. */
 export function openDossier(id: string) {
   const card = cards.find((c) => c.id === id);
   if (!card) return;
-  $("dossier-kicker").textContent = "casus belli · file";
+  $("dossier-kicker").textContent = "Meridian Council · draft resolution";
   $("dossier-title").textContent = card.label;
   $("dossier-body").innerHTML = `
     <p class="lede">${esc(card.text)}</p>
-    <div class="tag sep">how it got here</div>
+    <div class="tag sep">why this is before the council</div>
     ${timeline(card.timeline)}
-    <div class="tag sep">what each capital says it was</div>
+    <div class="tag sep">how each capital will read your decision</div>
     <div class="two-accounts">
       <div class="acct west"><div class="tag">Aurelia</div><p>${esc(card.positions.west)}</p></div>
       <div class="acct east"><div class="tag">Korsav</div><p>${esc(card.positions.east)}</p></div>
@@ -490,7 +442,7 @@ export function openDossier(id: string) {
 
   const pick = $<HTMLButtonElement>("btn-dossier-pick");
   pick.classList.remove("hidden");
-  const label = () => (picked.has(id) ? "✓ on the table — remove" : "use this casus belli");
+  const label = () => (picked.has(id) ? "✓ in the resolution — remove" : "add to resolution");
   pick.textContent = label();
   pick.onclick = () => {
     toggle(id);
@@ -601,7 +553,7 @@ export function renderReplay(block: ReplayBlock | null) {
   note.innerHTML = `<b>replaying “${esc(block.current.name)}”</b> — ${esc(
     block.current.title
   )}. ${block.current.turns} turns, ${count(block.current.dead)} dead. The deck below is
-    live for reading the files, but the war is already chosen: <em>ignite</em> plays this
+    live for reading the files, but the war is already chosen: <em>adopt resolution</em> plays this
     one back. <span class="dim">${ending}</span>`;
 }
 

@@ -67,20 +67,9 @@ async def test_a_card_that_takes_money_takes_money():
 
 
 @pytest.mark.asyncio
-async def test_a_card_that_wrecks_an_economy_lowers_its_ceiling_too():
-    """Output recovers towards what the country was worth before the war. A card that
-    takes eight points off and leaves the baseline alone is a card that does nothing
-    after two upkeeps."""
-    state = await ignite("cable")
-    assert state.west.gdp_base == state.west.gdp
-    assert state.west.gdp < initial_state().west.gdp
-
-
-@pytest.mark.asyncio
-async def test_a_card_that_enriches_one_raises_its_ceiling():
-    state = await ignite("rig")
-    assert state.west.gdp > initial_state().west.gdp
-    assert state.west.gdp_base == state.west.gdp
+async def test_legacy_gdp_effects_are_ignored_by_new_opening_resolutions():
+    state = await ignite("cable", "rig")
+    assert state.west.gdp == initial_state().west.gdp
 
 
 @pytest.mark.asyncio

@@ -30,7 +30,7 @@ PROFILES: Dict[str, Dict[str, Any]] = {
         # Deep in precision air and cyber, thin at sea. One warhead, like everyone.
         "arsenal": {
             "drone_swarm": 9, "cruise_missile": 7, "naval_barrage": 3,
-            "cyber_strike": 7, "nuke": 1,
+            "cyber_strike": 7, "nuke": 1, "narrative": 4,
         },
         "traits": {
             # The world extends Aurelia credit it has not entirely earned.
@@ -63,7 +63,7 @@ PROFILES: Dict[str, Dict[str, Any]] = {
         # A deep cheap magazine and a real navy. Almost no cyber arm.
         "arsenal": {
             "drone_swarm": 13, "cruise_missile": 4, "naval_barrage": 9,
-            "cyber_strike": 3, "nuke": 1,
+            "cyber_strike": 3, "nuke": 1, "narrative": 7,
         },
         "traits": {
             # Nobody gives Korsav the benefit of any doubt.

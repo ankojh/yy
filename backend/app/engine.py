@@ -4,9 +4,9 @@ The split that matters: this file owns every number. The arbiter LLM only ever r
 bounded modifier and a judgment call, which get applied here. A model can never invent a
 state change, so a hallucination costs you flavor, not integrity of the simulation.
 
-Six ways for a war to end. Integrity, morale or standing reaching zero; public unrest
-reaching one hundred and taking the government with it; somebody signing a capitulation;
-or — the only one that is not a defeat — both capitals signing a settlement at the table.
+Infrastructure reaching zero; public unrest reaching one hundred and taking the
+government with it; somebody signing a capitulation; or both capitals signing a
+settlement at the table.
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -123,28 +123,21 @@ def _hit_morale(nation: Nation, amount: float, out: List[Delta]) -> None:
 
 
 def _stir(nation: Nation, amount: float, out: List[Delta]) -> None:
-    """Public unrest, filtered through this nation's temperament and its state media.
-
-    A free press amplifies bad news; a running propaganda campaign nearly silences it.
-    This is the single knob that makes Aurelia and Korsav fight different wars.
-    """
+    """Public unrest filtered through the island's political temperament."""
     if amount <= 0:
         return
     amount *= nation.traits.unrest_sensitivity
-    amount *= max(0.15, 1 - nation.spin_strength() * 0.75)
     _drift(nation, "unrest", amount, out)
 
 
 def _isolate(nation: Nation, amount: float, out: List[Delta]) -> None:
     """International pressure, filtered through how much benefit of the doubt you get.
 
-    Propaganda cuts both ways: it calms your streets and it makes every foreign capital
-    discount your account of what happened, so the same act costs you more abroad.
+    The two islands receive different degrees of international benefit of the doubt.
     """
     if amount <= 0:
         return
     amount *= nation.traits.intl_sensitivity
-    amount *= 1 + nation.spin_strength() * 0.45
     _drift(nation, "intl_pressure", amount, out)
 
 
@@ -285,12 +278,9 @@ def apply_action(
 
         if nuclear:
             _bump(foe, "integrity", -damage, deltas)
-            _bump(foe, "gdp", -damage * 0.8, deltas)
-            _hit_morale(foe, 30, deltas)
             _stir(foe, 26, deltas)
             # Even a state broadcaster cannot sell this one at home.
             _bump(me, "unrest", 18, deltas)
-            _bump(me, "standing", spec["rep"], deltas)
             world.tension = 100
             place, protected = "the capital", True
             notes.append(
@@ -304,26 +294,16 @@ def apply_action(
                 _bump(foe, "military", -damage * 0.55, deltas)
                 _stir(foe, 1.5, deltas)
             elif target == "infrastructure":
-                # Bombing a country's works is bombing its books. Output follows
-                # integrity down, and a shrinking economy cannot fund a war.
                 _bump(foe, "integrity", -damage, deltas)
-                _bump(foe, "gdp", -damage * 0.55, deltas)
                 _stir(foe, 4, deltas)
             else:  # civilian
                 _bump(foe, "integrity", -damage * 0.5, deltas)
-                _bump(foe, "gdp", -damage * 0.2, deltas)
-                _hit_morale(foe, 8, deltas)
                 # Their streets fill with grief; yours fill with people who did not want
-                # this done in their name — unless the state is telling them otherwise.
+                # this done in their name.
                 _stir(foe, 12, deltas)
                 _stir(me, 6, deltas)
-                _bump(me, "standing", -18, deltas)
                 notes.append(f"{me.name} struck civilian targets — the world is watching")
 
-            _hit_morale(foe, 4, deltas)
-            # Sanctions double the diplomatic price of carrying on regardless.
-            rep = spec["rep"] * (2 if sanctioned else 1)
-            _bump(me, "standing", rep, deltas)
             world.tension = clamp(world.tension + (12 if target == "civilian" else 8))
 
         _kill(foe, dead, deltas)
@@ -332,7 +312,6 @@ def apply_action(
         if protected and dead > 0:
             _isolate(me, 7 if not nuclear else 20, deltas)
             _stir(foe, 2, deltas)
-            _bump(me, "standing", -6, deltas)
         if dead > 0 and (protected or target == "civilian" or nuclear):
             world.atrocities.append(
                 Atrocity(
@@ -352,9 +331,8 @@ def apply_action(
         # The point is the next three turns, not this one. Upkeep does the work.
         foe.effects.blockaded = BLOCKADE_TURNS
         _bump(foe, "military", -5 * k, deltas)
-        _bump(foe, "gdp", -6 * k, deltas)
+        _bump(foe, "budget", -6 * k, deltas, high=BUDGET_CEILING)
         _stir(foe, 5, deltas)
-        _bump(me, "standing", -8, deltas)
         _isolate(me, 5, deltas)
         world.tension = clamp(world.tension + 6)
         notes.append(f"{me.name} closes the sea lanes around {foe.name}.")
@@ -364,7 +342,6 @@ def apply_action(
         me.effects.shield[domain] = SHIELD_TURNS
         before = me.defenses.get(domain, 0)
         me.defenses[domain] = clamp(before + FORTIFY_GAIN * k)
-        _bump(me, "morale", 2, deltas)
         # Said out loud, because the whole complaint about fortify was that you could
         # not tell whether it had done anything.
         notes.append(
@@ -374,48 +351,35 @@ def apply_action(
 
     elif tool == "intl_appeal":
         # Credibility is the arbiter's call — a baseless accusation barely moves the needle.
-        _bump(me, "standing", 8 * k, deltas)
         # The point of an appeal is the *transfer*: pressure comes off you and lands on
         # them. It is the only instrument that lowers your own isolation.
         _bump(me, "intl_pressure", -7 * k, deltas)
         if ruling is None or ruling.effective:
-            _bump(foe, "standing", -6 * k, deltas)
             _isolate(foe, 12 * k, deltas)
             foe.effects.sanctioned = SANCTION_TURNS
             notes.append(f"The council votes sanctions against {foe.name}.")
         world.tension = clamp(world.tension - 3)
 
     elif tool == "address_public":
-        _bump(me, "morale", 6 * k, deltas)
-        # Honesty works best exactly where propaganda works worst. This is the inverse
-        # of propaganda_reach on purpose: it gives the country with a free press a real
-        # instrument for the problem a free press creates, instead of leaving it with
-        # the fastest-rising unrest in the war and nothing to do about it.
-        _bump(me, "unrest", -7 * k * (2 - me.traits.propaganda_reach), deltas)
-        me.effects.morale_buffer = int(
-            min(MORALE_BUFFER_CAP, me.effects.morale_buffer + MORALE_BUFFER_GAIN * k)
-        )
-        _bump(me, "standing", -1, deltas)
+        _bump(me, "unrest", -10 * k, deltas)
 
     elif tool == "propaganda":
-        # A campaign that runs regardless of the facts. It buys quiet at home and costs
-        # credibility everywhere else — and if it is caught out, it buys nothing at all.
+        # Narrative warfare is finite ammunition aimed at the enemy's public. The
+        # target's own political temperament determines how far the story travels.
+        if me.arsenal.get("narrative", 0) <= 0:
+            notes.append(f"{me.name} has exhausted its influence network.")
+            return deltas, notes
+        me.arsenal["narrative"] -= 1
         credible = ruling is None or ruling.effective
-        me.effects.spin = SPIN_TURNS
-        _bump(me, "propaganda", 8 * (k if credible else 0.5), deltas)
         if credible:
-            _bump(me, "unrest", -14 * k * me.traits.propaganda_reach, deltas)
-            _bump(me, "morale", 3 * k, deltas)
+            _stir(foe, 14 * k, deltas)
+            notes.append(f"{me.name}'s narrative warfare operation spreads through {foe.name}.")
         else:
-            # Caught fabricating. The public reads the denial as a confession.
-            _bump(me, "unrest", 9, deltas)
+            _stir(me, 7, deltas)
             notes.append(
-                f"{me.name}'s broadcast is contradicted by the record within the hour."
+                f"{me.name}'s narrative warfare operation is exposed and backfires at home."
             )
-        # The world discounts you either way; the raw number ignores spin_strength here
-        # because this *is* the spin.
-        _bump(me, "intl_pressure", 9 * me.traits.intl_sensitivity, deltas)
-        _bump(me, "standing", -3, deltas)
+        _isolate(me, 6, deltas)
 
     elif tool == "open_talks":
         talks = world.talks
@@ -431,10 +395,7 @@ def apply_action(
         me.effects.blockaded = foe.effects.blockaded = 0
         # Asking costs nothing in dollars and a great deal in every other currency: your own
         # people hear a government that thinks it is losing, and it is.
-        _bump(me, "morale", -3, deltas)
         _stir(me, 2, deltas)
-        # The world, for once, approves of you.
-        _bump(me, "standing", 3, deltas)
         _bump(me, "intl_pressure", -6, deltas)
         world.tension = clamp(world.tension - 12)
         notes.append(
@@ -497,8 +458,6 @@ def apply_action(
         else:
             world.talks.transcript.append(f"{me.name} leaves the table.")
             deltas.extend(collapse_talks(state, blame=me.side))
-            # A government that walks out has decided it can win, and says so at home.
-            _bump(me, "morale", 4, deltas)
             notes.append(
                 f"{me.name} walks out. The ceasefire lapses and the world notes who ended it."
             )
@@ -528,11 +487,8 @@ def apply_action(
     elif tool == "hold":
         # Has to be a real option, not a wasted turn, or fatigue just becomes a tax.
         _bump(me, "military", 12 * me.traits.industry, deltas)
-        # A turn nobody spends on ordnance is a turn the treasury recovers.
-        _bump(me, "budget", 9, deltas, high=BUDGET_CEILING)
         for domain in me.defenses:
             me.defenses[domain] = clamp(me.defenses[domain] + HOLD_DEFENCE_GAIN)
-        _bump(me, "morale", -4, deltas)
         _stir(me, 3, deltas)
         # Refitting also lets everything else come back sooner.
         for name in list(me.cooldowns):
@@ -587,7 +543,6 @@ def collapse_talks(state: GameState, blame: Optional[str] = None) -> List[Delta]
     world.tension = clamp(world.tension + 18)
     if blame:
         _isolate(state.nation(blame), 9, deltas)
-        _bump(state.nation(blame), "standing", -4, deltas)
     for nation in (state.west, state.east):
         # A country that was told peace was close and then was not tells its government so.
         _stir(nation, 3, deltas)
@@ -626,8 +581,6 @@ def resolve_talks(state: GameState) -> Tuple[List[Delta], List[str]]:
         titles = ", ".join(ARTICLES[a]["title"] for a in gained)
         notes.append(f"Agreed at the table: {titles}.")
         talks.transcript.append(f"Agreed: {titles}.")
-        for nation in (state.west, state.east):
-            _bump(nation, "morale", 2, deltas)
     else:
         talks.deadlock += 1
         notes.append(
@@ -707,135 +660,63 @@ def condemn(nation: Nation, amount: float) -> List[Delta]:
 
 
 def trade_factor(nation: Nation) -> float:
-    """How much of this nation's economy the outside world will still deal with."""
-    bite = (nation.intl_pressure / 100) * 0.75 * nation.traits.trade_exposure
-    factor = max(TRADE_FLOOR, 1 - bite)
-    if nation.effects.blockaded > 0:
-        factor *= BLOCKADE_TRADE_CUT
-    return factor
+    """Legacy replay helper. Output no longer generates wartime funds."""
+    return 1.0
 
 
 def turn_income(nation: Nation) -> int:
-    """Revenue, in $B, this nation collects at the next upkeep at current pressure."""
-    return int(round(nation.gdp * INCOME_RATE * trade_factor(nation)))
+    """Treasuries are finite; there is no automatic wartime income."""
+    return 0
 
 
 def turn_upkeep(nation: Nation) -> int:
-    """What being this country at war costs before a single shot is fired."""
-    bill = BASE_UPKEEP + nation.propaganda // 14
-    if nation.effects.sanctioned > 0:
-        bill += 2
-    if nation.effects.blockaded > 0:
-        bill += 2
-    return bill
+    """There is no hidden national budget loop; actions spend treasury directly."""
+    return 0
 
 
 def apply_upkeep(state: GameState) -> List[Delta]:
-    """Between-turn drift: the treasury settles, capacity rebuilds, and a country that
-    is being wrecked loses first its output, then its patience with its own government."""
+    """Between-turn drift for capacity, public mood, pressure, and persistent effects."""
     deltas: List[Delta] = []
     world = state.world
     truce = world.talks.open
     if world.talks_cooldown > 0 and not truce:
         world.talks_cooldown -= 1
     for nation in (state.west, state.east):
-        # ------------------------------------------------------------ the treasury
-        income = turn_income(nation)
-        bill = turn_upkeep(nation)
-        net = income - bill
-        if net < 0 and nation.budget + net < 0:
-            # The bills came due and could not be paid. Deficits compound: each
-            # consecutive one angers the public more than the last.
-            nation.effects.deficit_turns += 1
-            shortfall = nation.effects.deficit_turns
-            _bump(nation, "budget", -nation.budget, deltas, high=BUDGET_CEILING)
-            _stir(nation, 3 + 2 * shortfall, deltas)
-            _bump(nation, "morale", -shortfall, deltas)
-        else:
-            nation.effects.deficit_turns = 0
-            _bump(nation, "budget", net, deltas, high=BUDGET_CEILING)
-
-        # ------------------------------------------------------------ output
-        # An economy cannot exceed the infrastructure still standing under it, and it
-        # never climbs back past what the country was worth before the war.
-        ceiling = min(nation.gdp_base, nation.integrity)
-        if nation.gdp > ceiling:
-            # Wrecked works do not stop producing the instant they are hit, but they do
-            # stop. Sliding down to the ceiling rather than snapping to it keeps the
-            # readout honest without making one bad turn erase an economy.
-            _drift(nation, "gdp", max(-4.0, (ceiling - nation.gdp) / 2), deltas)
-        elif nation.gdp < ceiling and nation.effects.blockaded == 0:
-            _bump(nation, "gdp", min(3 * nation.traits.industry, ceiling - nation.gdp), deltas)
-
-        # ------------------------------------------------------------ capacity
-        # A country with intact infrastructure rebuilds quickly; a wrecked one cannot,
-        # and a broke one cannot pay the crews that would do it.
+        nation.effects.deficit_turns = 1 if nation.budget <= 0 else 0
         regen = (3 + nation.integrity // 14) * nation.traits.industry
         if nation.effects.deficit_turns > 0:
             regen *= 0.5
+            _stir(nation, 3, deltas)
         _bump(nation, "military", regen, deltas)
 
         if nation.integrity < 50:
-            _hit_morale(nation, 3, deltas)
             _stir(nation, 3, deltas)
 
-        # ------------------------------------------------------------ the ceasefire
-        # This is the buffer, and it is generous on purpose. A round at the table is
-        # worth more to a broken army than any turn it could have spent fighting, which
-        # is precisely why a winning commander should think hard before agreeing to sit
-        # down — and why a losing one should ask even when it means none of it.
         if truce:
             _bump(nation, "military", CEASEFIRE_REFIT * nation.traits.industry, deltas)
-            _bump(nation, "budget", CEASEFIRE_CREDITS, deltas, high=BUDGET_CEILING)
-            # The streets empty when the sirens stop, and they empty fast. This has to be
-            # large enough to outweigh a clause or two of concession, or asking for peace
-            # is a way to lose faster and no rational commander would ever do it.
             _drift(nation, "unrest", -CEASEFIRE_CALM, deltas)
             _drift(nation, "intl_pressure", -2, deltas)
-            _bump(nation, "morale", 1, deltas)
 
-        # ------------------------------------------------------------ the streets
-        # War weariness. It is slow, it never stops, and it is the reason a long war is
-        # dangerous even to the side that is winning it. It stops while the guns do.
-        #
-        # The divisor is 8 rather than 6 because interception now stops a real share of
-        # every salvo and wars run three turns longer for it. At the old rate those extra
-        # turns were worth ~14 unrest to Aurelia and ~6 to Korsav — the free-press
-        # multiplier quietly turned a defence change into a balance change.
         if not truce:
             _stir(nation, 1 + world.turn / 8, deltas)
 
-        # ------------------------------------------------------------ isolation
-        # Sustained condemnation bleeds legitimacy. It never stops the fighting.
-        if nation.intl_pressure >= 40:
-            _bump(nation, "standing", -(nation.intl_pressure // 30), deltas)
-        # Pressure fades when you stop giving the world reasons. Slowly.
+        # International pressure now acts directly on the one financial meter. This
+        # keeps it consequential without reintroducing GDP or a separate standing score.
+        pressure_cost = nation.intl_pressure // 25
+        if pressure_cost:
+            _bump(nation, "budget", -pressure_cost, deltas, high=BUDGET_CEILING)
         if nation.effects.sanctioned == 0:
             _drift(nation, "intl_pressure", -2, deltas)
 
-        # ------------------------------------------------------------ standing effects
-        # A blockade is worth a turn precisely because of this: it keeps working while
-        # you do something else.
         if nation.effects.blockaded > 0:
             _bump(nation, "military", -5, deltas)
             _bump(nation, "integrity", -2, deltas)
-            _bump(nation, "gdp", -3, deltas)
-            _hit_morale(nation, 2, deltas)
+            _bump(nation, "budget", -4, deltas, high=BUDGET_CEILING)
             _stir(nation, 4, deltas)
-            # Nobody is shelling anybody, and people die anyway: the medicine and the
-            # insulin that did not come in on the ship.
             _kill(nation, BLOCKADE_DEATHS, deltas)
             nation.effects.blockaded -= 1
         if nation.effects.sanctioned > 0:
-            # Deliberately no standing drip here. Sanctions bite through the doubled
-            # cost of *continuing to attack* and through the trade factor — a nation
-            # that stops fighting stops paying. A flat drain gave the spiral no exit.
             nation.effects.sanctioned -= 1
-        if nation.effects.spin > 0:
-            nation.effects.spin -= 1
-        # A propaganda apparatus decays without a campaign feeding it.
-        if nation.effects.spin == 0 and nation.propaganda > 0:
-            _bump(nation, "propaganda", -2, deltas)
 
         for domain in list(nation.effects.shield):
             nation.effects.shield[domain] -= 1
@@ -855,13 +736,9 @@ def apply_upkeep(state: GameState) -> List[Delta]:
 
 def _fallen(nation: Nation) -> Optional[str]:
     if nation.integrity <= 0:
-        return "is in ruins"
-    if nation.morale <= 0:
-        return "has fallen to its own people"
+        return "has lost its infrastructure"
     if nation.unrest >= 100:
         return "has lost its capital to the crowd outside it"
-    if nation.standing <= 0:
-        return "stands alone, sanctioned into collapse"
     return None
 
 
@@ -899,7 +776,7 @@ def check_end(state: GameState) -> Optional[str]:
         # Hard cap so a match cannot run forever — but it still resolves as a defeat,
         # never a draw. Whoever is weaker is forced to capitulate.
         score = {
-            n.side: n.integrity + n.morale + n.standing + n.gdp - n.unrest
+            n.side: n.integrity + n.military + min(n.budget, 100) - n.unrest - n.intl_pressure
             for n in (state.west, state.east)
         }
         loser = state.west if score["west"] <= score["east"] else state.east

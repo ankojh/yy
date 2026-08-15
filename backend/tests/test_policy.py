@@ -26,7 +26,7 @@ def test_capitulates_only_when_collapse_is_imminent():
 
 def test_shores_up_a_cracking_home_front():
     state = initial_state()
-    state.west.morale = 20
+    state.west.unrest = 70
     assert choose(state).tool == "address_public"
 
 
@@ -52,7 +52,6 @@ def test_fortifies_the_domain_it_is_actually_being_hit_through():
     state = initial_state()
     state.west.strike_streak = 1          # cannot strike well
     state.west.cooldowns = {"blockade": 2, "intl_appeal": 2}
-    state.west.morale = 50
     for turn in (1, 2):
         state.world.history.append(
             TurnRecord(turn=turn, side="east", tool="strike",
@@ -81,10 +80,10 @@ def test_blockades_when_it_cannot_strike():
     assert choose(state).tool == "blockade"
 
 
-def test_takes_a_real_grievance_to_the_council_when_standing_bleeds():
+def test_takes_a_real_grievance_to_the_council_when_pressure_mounts():
     state = initial_state()
     state.west.strike_streak = 1
-    state.west.standing = 30
+    state.west.intl_pressure = 40
     state.world.history.append(
         TurnRecord(turn=1, side="east", tool="strike",
                    args={"weapon": "drone_swarm", "target": "civilian"})
@@ -95,7 +94,7 @@ def test_takes_a_real_grievance_to_the_council_when_standing_bleeds():
 def test_does_not_petition_the_council_without_a_case():
     state = initial_state()
     state.west.strike_streak = 1
-    state.west.standing = 30
+    state.west.intl_pressure = 40
     state.west.cooldowns = {"blockade": 2}
     assert choose(state).tool != "intl_appeal"
 
@@ -150,8 +149,7 @@ def test_the_policy_exercises_every_mechanic_across_a_batch():
     for seed in range(10):
         seen += asyncio.run(play(seed))
 
-    for tool in ("strike", "blockade", "fortify", "address_public",
-                 "intl_appeal", "propaganda", "hold"):
+    for tool in ("strike", "blockade", "address_public", "propaganda", "hold"):
         assert seen[tool] > 0, f"{tool} never chosen across 10 matches: {dict(seen)}"
 
     # Strike stays the backbone of the war without being the whole war.

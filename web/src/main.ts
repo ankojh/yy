@@ -1,6 +1,6 @@
 import { WarMap } from "./canvas";
 import {
-  $, clearStage, openQuarrel, renderEvent, renderIgnitionCards, renderReplay, renderState,
+  $, clearStage, openQuarrel, renderEvent, renderReplay, renderState,
   setDwell, setReference,
 } from "./ui";
 import type { ReplayBlock } from "./ui";
@@ -12,7 +12,6 @@ const API_PORT = import.meta.env.VITE_API_PORT ?? "8077";
 const WS_URL = `ws://${location.hostname}:${API_PORT}/ws${location.search}`;
 
 const map = new WarMap($<HTMLCanvasElement>("map"));
-const selected = new Set<string>();
 let state: GameState | null = null;
 let socket: WebSocket | null = null;
 // The bench: null when this connection is fighting a real match, and a description of
@@ -23,11 +22,68 @@ let scrubbing = false;
 // The sixty-one years, as sent by the server. Kept so the "read the whole quarrel"
 // button in the briefing has something to open without a second round trip.
 let quarrel: { partition: any[]; accounts: any } = { partition: [], accounts: {} };
+let crisisScenario = "line";
+let crisisPosition = "middle";
+
+const CRISIS_LABELS: Record<string, string> = {
+  line: "the Kestrel Line dispute",
+  reef: "the Bellow Reef dispute",
+  reckoning: "the unresolved historical claims",
+};
 
 const nameOf = (s: Side) => (state ? state[s].name : s);
 
+function renderSupportRequest() {
+  const request = state?.world.council_request;
+  const host = $("support-controls");
+  host.classList.toggle("hidden", !request || Boolean(replay));
+  $<HTMLButtonElement>("btn-step").disabled = Boolean(request);
+  $<HTMLButtonElement>("btn-run").disabled = Boolean(request);
+  if (!request) return;
+  $("support-kicker").textContent = `${state?.[request.side].name ?? request.side} is asking`;
+  $("support-description").textContent = request.text;
+  $("support-cost").textContent = `${request.label} · $${request.cost}B`;
+  $<HTMLButtonElement>("btn-support").disabled =
+    request.cost > (state?.world.council_budget ?? 0);
+}
+
 function send(command: string, extra: Record<string, unknown> = {}) {
   socket?.readyState === WebSocket.OPEN && socket.send(JSON.stringify({ command, ...extra }));
+}
+
+function renderCrisisDescription() {
+  const west = state?.west.name ?? "Aurelia";
+  const east = state?.east.name ?? "Korsav";
+  renderPositionButton("position-west", west, "aurelia");
+  renderPositionButton("position-east", east, "korsav");
+  $("crisis-response-description").textContent = {
+    west: `The Council would accept ${west}'s interpretation of this matter.`,
+    middle: "The Council would reject both claims in full and advance a negotiated compromise.",
+    east: `The Council would accept ${east}'s interpretation of this matter.`,
+  }[crisisPosition] ?? "";
+}
+
+function renderPositionButton(id: string, name: string, flagName: string) {
+  const button = $(id);
+  const image = document.createElement("img");
+  image.className = "position-flag";
+  image.src = `/flags/${flagName}.svg`;
+  image.alt = `Flag of ${name}`;
+  const label = document.createElement("span");
+  label.textContent = `Rule in Favour of ${name}`;
+  button.replaceChildren(image, label);
+}
+
+function renderCrisisOptions() {
+  for (const button of Array.from(
+    $("crisis-scenarios").querySelectorAll<HTMLElement>("[data-scenario]")
+  )) {
+    button.classList.toggle("on", button.dataset.scenario === crisisScenario);
+  }
+  for (const button of Array.from($("crisis-positions").children) as HTMLElement[]) {
+    button.classList.toggle("on", button.dataset.position === crisisPosition);
+  }
+  renderCrisisDescription();
 }
 
 function connect() {
@@ -47,9 +103,9 @@ function connect() {
 
     // A jump is the whole event stream up to some turn, replayed at once. The UI is a
     // fold, so that is the only correct way to arrive at a turn — but the transient half
-    // of it (bubbles, verdicts, damage floaters) is thirty seconds of animation fired in
-    // one frame, and none of it belongs to the state being jumped to. The durable half
-    // still runs: meters, the map, the talks board, and the last line of the ticker.
+    // of it (bubbles, verdicts) is thirty seconds of animation fired in one frame, and
+    // none of it belongs to the state being jumped to. The durable half still runs:
+    // meters, the map, the talks board, and the last line of the ticker.
     if (ev.type === "scrub") {
       scrubbing = Boolean(ev.payload.active);
       if (scrubbing) clearStage();
@@ -65,7 +121,7 @@ function connect() {
     if (ev.type === "reset") {
       clearStage();
       map.clear();
-      selected.clear();
+      state = null;
       // The bench, or nothing. Sent on every reset so switching recordings refreshes
       // the jump menu along with everything else.
       replay = ev.payload.replay ?? null;
@@ -74,17 +130,20 @@ function connect() {
       // once and held, because every panel below needs it and none of them owns it.
       setReference(ev.payload.panel ?? {}, ev.payload.articles ?? {});
       quarrel = { partition: ev.payload.partition ?? [], accounts: ev.payload.accounts ?? {} };
-      renderIgnitionCards(ev.payload.ignitions, selected);
+      crisisScenario = "line";
+      crisisPosition = "middle";
+      $<HTMLTextAreaElement>("crisis-prompt").value = "";
+      renderCrisisOptions();
+      renderSupportRequest();
       // Pacing lives on the server. Tooltips and bubbles hold for exactly as long as
       // the beat they belong to rather than for a hardcoded seven seconds.
       setDwell(Number(ev.payload.reveal_ms) || 0);
-      $("mode").textContent = replay
-        ? `replay · ${replay.name}`
-        : ev.payload.mock
-          ? "mock — no API key"
-          : "live";
+      const mode = $("mode");
+      mode.classList.toggle("hidden", !replay && Boolean(ev.payload.mock));
+      mode.textContent = replay ? `replay · ${replay.name}` : "live";
       $("ignition").classList.remove("hidden");
       $("run-controls").classList.add("hidden");
+      $("conflict-controls").classList.add("hidden");
       return;
     }
 
@@ -92,8 +151,12 @@ function connect() {
       state = ev.payload.state as GameState;
       renderState(state);
       map.setState(state);
+      renderCrisisOptions();
+      renderSupportRequest();
       if (state.world.phase !== "briefing") {
+        closeCrisisDialog();
         $("ignition").classList.add("hidden");
+        $("conflict-controls").classList.remove("hidden");
         $("run-controls").classList.remove("hidden");
       }
       return;
@@ -115,7 +178,7 @@ function connect() {
       );
     }
 
-    // Everything `renderEvent` draws for these three is transient and belongs to the
+    // Everything `renderEvent` draws for these two is transient and belongs to the
     // moment it happened, not to the turn being jumped to. The ticker lines are not,
     // and are replayed, so a jump lands with the last bulletin still on screen.
     if (scrubbing && TRANSIENT.has(ev.type)) return;
@@ -124,7 +187,7 @@ function connect() {
   };
 }
 
-const TRANSIENT = new Set(["message", "ruling", "deltas"]);
+const TRANSIENT = new Set(["message", "ruling"]);
 
 // Opening-position sliders. Live label on drag, one configure message on release.
 type Setup = Record<string, { arsenal: Record<string, number> } & Record<string, any>>;
@@ -160,8 +223,10 @@ for (const id of ["panel-west", "panel-east"]) {
  */
 const intro = $("intro");
 const dossier = $("dossier");
+const crisisDialog = $("crisis-dialog");
 const closeIntro = () => intro.classList.add("hidden");
 const closeDossier = () => dossier.classList.add("hidden");
+const closeCrisisDialog = () => crisisDialog.classList.add("hidden");
 
 $("btn-intro").onclick = closeIntro;
 intro.addEventListener("click", (e) => {
@@ -172,28 +237,67 @@ $("btn-help").onclick = () => intro.classList.remove("hidden");
 // The files: one incident, or the whole sixty-one years. Both land in the same panel.
 $("btn-quarrel").onclick = () => openQuarrel(quarrel.partition, quarrel.accounts);
 $("btn-dossier-close").onclick = closeDossier;
+$("btn-crisis-close").onclick = closeCrisisDialog;
 dossier.addEventListener("click", (e) => {
   if (e.target === dossier) closeDossier();
+});
+crisisDialog.addEventListener("click", (e) => {
+  if (e.target === crisisDialog) closeCrisisDialog();
 });
 
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  if (!crisisDialog.classList.contains("hidden")) {
+    closeCrisisDialog();
+    return;
+  }
   // Innermost first: the file opens on top of the briefing, so Escape has to close it
   // first or the briefing vanishes from under a panel that is still up.
   dossier.classList.contains("hidden") ? closeIntro() : closeDossier();
 });
 
-$("btn-ignite").onclick = () =>
-  send("ignite", { ignitions: [...selected], custom: $<HTMLInputElement>("custom").value });
+$("btn-ignite").onclick = () => crisisDialog.classList.remove("hidden");
+$("crisis-scenarios").onclick = (event) => {
+  const option = (event.target as HTMLElement).closest<HTMLElement>("[data-scenario]");
+  if (!option?.dataset.scenario) return;
+  crisisScenario = option.dataset.scenario;
+  renderCrisisOptions();
+};
+$("crisis-positions").onclick = (event) => {
+  const option = (event.target as HTMLElement).closest<HTMLElement>("[data-position]");
+  if (!option?.dataset.position) return;
+  crisisPosition = option.dataset.position;
+  renderCrisisOptions();
+};
+$("btn-crisis-start").onclick = () => {
+  const west = state?.west.name ?? "Aurelia";
+  const east = state?.east.name ?? "Korsav";
+  const position = {
+    west: `rules in favour of ${west}`,
+    middle: "calls for a negotiated middle ground",
+    east: `rules in favour of ${east}`,
+  }[crisisPosition];
+  const direction = $<HTMLTextAreaElement>("crisis-prompt").value.trim();
+  const decision = `On ${CRISIS_LABELS[crisisScenario]}, the Meridian Council ${position}.`;
+  send("ignite", {
+    ignitions: [],
+    custom: direction ? `${decision} Additional direction: ${direction}` : decision,
+  });
+  closeCrisisDialog();
+};
 $("btn-step").onclick = () => send("step");
 $("btn-run").onclick = () => send("run");
 $("btn-pause").onclick = () => send("pause");
+$("btn-inject").onclick = () => send("inject");
 $("btn-reset").onclick = () => send("reset");
-$("btn-inject").onclick = () => {
-  const input = $<HTMLInputElement>("inject");
-  send("inject", { text: input.value });
-  input.value = "";
-};
+$("btn-support").onclick = () => send("support", {
+  request_id: state?.world.council_request?.id,
+  approved: true,
+});
+$("btn-support-decline").onclick = () => send("support", {
+  request_id: state?.world.council_request?.id,
+  approved: false,
+});
 
 /**
  * The bench.
@@ -216,39 +320,5 @@ $<HTMLSelectElement>("replay-speed").onchange = (e) => {
   if (replay) replay.speed = value;
   send("speed", { value });
 };
-
-/* -------------------------------------------------------------------------------
- * TEMPORARY: one-click mock run. Delete this block and the button in index.html.
- *
- * Three commands in the order the server processes them — load a recording, light it,
- * play it — so a war starts with no picking and no config, from whatever state the
- * page is in. `attrition` is the fullest one on file: twelve turns, ten different
- * tools, talks that stall twice, ending in capitulation. Change the two constants and
- * nothing else.
- *
- * Gated on the catalogue rather than shown unconditionally, because a `replay` command
- * naming a recording the server does not have falls back to a *live* match — and a
- * button whose whole promise is "this costs nothing" must not be one missing file away
- * from spending money.
- */
-const MOCK_RUN = "attrition";
-const MOCK_SPEED = 2;   // 1 is the real cadence; 2 halves a twelve-turn war to ~2 min
-
-fetch(`http://${location.hostname}:${API_PORT}/replays`)
-  .then((r) => r.json())
-  .then((data: { replays: Array<{ name: string }> }) => {
-    const have = (data.replays ?? []).map((r) => r.name);
-    if (!have.length) return;
-    const name = have.includes(MOCK_RUN) ? MOCK_RUN : have[0];
-    const button = $("btn-mock");
-    button.classList.remove("hidden");
-    button.onclick = () => {
-      closeIntro();
-      send("replay", { name, speed: MOCK_SPEED });
-      send("ignite", {});
-      send("run");
-    };
-  })
-  .catch(() => {});   // no bench, no button
 
 connect();

@@ -5,12 +5,12 @@ recording of a session: emit the same events in the same order, at the cadence t
 loop would have used, and the UI cannot tell the difference. No model is called, no key
 is needed, and the same war plays identically as many times as you want to look at it.
 
-    REPLAY=accord .venv/bin/uvicorn app.main:app --port 8077
-    open http://localhost:5173/?replay=nuclear&speed=6
+    REPLAY=nano .venv/bin/uvicorn app.main:app --port 8077
+    open http://localhost:5173/?replay=nano&speed=6
 
 Recordings are ordinary match logs — anything `logs/` collects, live or mock, can be
-dropped into `fixtures/` and replayed. `scripts/make_fixtures.py` regenerates the seeded
-ones. Two things are deliberately *not* taken from the recording: the ignition deck and
+dropped into `fixtures/` and replayed. `scripts/make_fixtures.py` copies in the one that
+ships. Two things are deliberately *not* taken from the recording: the ignition deck and
 the quarrel, which always come from today's code, so a log recorded before a card existed
 still opens the dossiers the current build knows about.
 """
@@ -364,11 +364,10 @@ class ReplayGame:
         }
 
     async def ignite(self, ids: Optional[List[str]] = None, custom: str = "") -> None:
-        """The picks are decoration here.
+        """The opening nudge only starts the recorded prologue here.
 
         A war that has already been fought cannot be started differently, so whatever is
-        selected on the deck, the prologue that plays is the recorded one. The ignition
-        screen is still worth going through: it is a screen, and it needs styling too.
+        selected under the hood, the prologue that plays is the recorded one.
         """
         if self.started:
             return
@@ -417,6 +416,12 @@ class ReplayGame:
             return
         await self._say("injection", text=text.strip()[:500])
         await self._say("note", text="— a recording cannot be injected into; nothing moved —")
+
+    async def support(self, request_id: str, approved: bool) -> None:
+        """A recording cannot be altered by a new council grant."""
+        if not request_id:
+            return
+        await self._say("note", text="— a recording cannot receive new council support —")
 
     async def seek(self, turn: int) -> None:
         """Jump to the war as it stood at the end of a given turn.

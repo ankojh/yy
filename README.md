@@ -1,8 +1,9 @@
 # yudhyantra — war machines
 
-Two island nations that have hated each other for sixty-one years. You decide what the war
-is about; two LLM agents fight it; a third LLM agent adjudicates. You never command either
-side.
+Two island nations that have hated each other for sixty-one years. You chair the neutral
+Meridian Council; one small Council decision breaks the deadlock and starts the war. Two
+LLM agents fight it and a third adjudicates. You can answer either island's requests, but
+never command a combat move or join a side.
 
 ## Shape
 
@@ -12,18 +13,19 @@ side.
   free text.
 - **The Arbiter** sees both declared actions and the true world state, judges each for
   credibility, and returns a bounded modifier plus a news bulletin.
-- **You** ignite the conflict (one or several casus belli, stackable, plus your own), then
-  inject events mid-war.
+- **You** give history one small nudge to trigger the conflict. During the war, islands
+  periodically ask for relief, stabilization money, defensive systems, conventional
+  weapons, or diplomatic cover. You approve or decline from a finite Council fund; an
+  unsolicited grant is not possible, and recipients decide how approved aid is used.
 
 The split that keeps it honest: `engine.py` owns every number. The arbiter only ever returns
 a `-2..+2` modifier and an `effective` flag, both clamped server-side. A hallucinating model
 costs you flavor, never simulation integrity.
 
 Each nation sees its own exact stats but only **coarse bands** of the enemy's
-(`strong` / `holding` / `strained` / `critical`). Hidden information is the game — and a
-nation running a propaganda campaign reads *calmer than it is* to the enemy's analysts,
-because the only window they have onto its streets is its own broadcasters. The one number
-nobody can hide is the body count.
+(`strong` / `holding` / `strained` / `critical`). Hidden information is the game. Public
+unrest is visible only as a mood band, while the one number nobody can hide is the body
+count.
 
 ## Three chairs, three models
 
@@ -82,9 +84,25 @@ argument is ever load-bearing:
 
 Neither is a strawman, which is what makes them worth negotiating over.
 
-Each **casus belli** card is a file rather than a headline: the card face carries the title
-alone, and clicking it opens the incident, the fortnight of timeline that produced it, and
-what each capital says it was. They stack, and a stacked war starts much hotter.
+Each island has an original fictional flag in `web/public/flags`: Aurelia uses an asymmetric
+maritime ensign with an ivory hoist, gold meridian, compass, and twin-island stars; Korsav
+uses a rust field with a gold-edged central standard carrying three provincial lozenges.
+They identify the nation panels and Council rulings without borrowing a real flag template.
+
+The opening sits behind one neutral button: **review the matter**. It opens an
+emergency-session modal: choose a scenario, then rule for Aurelia, seek middle ground, or
+rule for Korsav. Each scenario includes a collapsible quick read, and an optional open-text
+direction can add a condition, guarantee, or finding. The interface presents the resolution
+as something that may trigger a crisis, while the simulation records it as the decision that
+caused this particular war.
+
+Once fighting begins, the Council has **$72B**, shown beside the turn counter. Every few
+turns the neediest island submits one priced request. Humanitarian relief calms its streets,
+stabilization funds refill its treasury, defensive systems improve interception, a weapons
+grant replenishes conventional rounds, and diplomatic cover lowers international pressure.
+The match waits for approval or refusal. The player never chooses a recipient, provides a
+nuclear weapon, receives a combat turn, or selects a target. **Gently interfere** adds a
+small Council-made complication when the player wants to stir the situation.
 
 ## The two countries are not the same country twice
 
@@ -94,23 +112,21 @@ read by the engine — none of it is flavour.
 
 |  | Aurelia | Korsav |
 |---|---|---|
-| economy | rich, export-driven (output 82) | poor, near-autarkic (output 56) |
 | treasury | $70B | $96B |
 | arm | precision air and cyber | deep drone magazine and a real navy |
 | weak at | the sea, and cyber defence is Korsav's problem not hers | cyber, in both directions |
 | the world | extends her credit (×0.75 pressure) | assumes the worst (×1.30) |
 | her public | free press, turns fast (×1.18 unrest) | state media, hard to move (×0.70) |
-| propaganda | persuades almost nobody (×0.55) | believed at home (×1.30) |
-| isolation | ruinous — she lives on trade (×1.35) | survivable (×0.70) |
+| narrative warfare | 4 operations | 7 operations |
 
 So Aurelia cannot fight Korsav's war and Korsav cannot afford Aurelia's. Aurelia loses to
 her own streets; Korsav loses to an empty treasury.
 
 ## Ways it ends
 
-Integrity, morale or standing reaching **0**; public unrest reaching **100** and taking the
-government with it; a signed capitulation; or — the only ending that is not a defeat for
-anybody — **a settlement at the table**.
+Infrastructure reaching **0**; public unrest reaching **100** and taking the government
+with it; a signed capitulation; or — the only ending that is not a defeat for anybody —
+**a settlement at the table**.
 
 ### The two pressures
 
@@ -120,15 +136,16 @@ Both are per-nation, and both are earned separately.
 scaled by *what you fired* and *what you hit* — a drone raid on an airbase is barely
 noticed, a cruise missile into a housing block costs roughly three times as much, a
 protected place is charged on top of that, and a warhead is in a category of its own. It
-taxes your trade and therefore your income, and above 40 it bleeds standing every turn.
-`intl_appeal` is the only instrument that moves it back down, and it moves it onto *them*.
+drains treasury directly—$1B per turn for every 25 points—and sanctions raise the cost of
+attacking. `intl_appeal` can move it onto the enemy, while the player can grant diplomatic
+cover or issue a censure to move it directly.
 
 **Public unrest** is what your own people do to you. It rises from damage done to your
-country, from civilian deaths on either side of the strait, from deficits, and simply from
-the war continuing. `address_public` settles it honestly and slowly. `propaganda` freezes
-it for three turns whatever you are actually doing — the only way to keep fighting a war
-your own public has turned against — at the cost of international pressure now and a
-permanently worse rate of accruing it. Get caught fabricating and it backfires at home too.
+country, civilian deaths, an empty treasury, enemy narrative warfare, and simply from
+the war continuing. Every increase is scaled by the island's political nature: Aurelia's
+free public moves quickly, while Korsav's controlled public is harder to shift.
+`address_public` lowers unrest. A finite narrative warfare operation targets the other
+island's unrest; a fabrication can backfire at home and always adds international pressure.
 
 The two pull against each other on purpose. Silencing your own people costs you credibility
 abroad, and the country that is good at one is bad at the other.
@@ -156,7 +173,7 @@ tell whether it had worked.
 Cover is now read as **interception**: rounds are stopped whole, the count is computed in
 `strike_interception()`, and the renderer draws precisely that many kills. Sixty points of
 air defence takes half a drone swarm out of the sky and you watch it happen. `fortify`
-raises the domain's standing defence permanently *and* lays hardened cover that absorbs four
+raises the domain's baseline defence permanently *and* lays hardened cover that absorbs four
 fifths of the next salvo through it. The panels show the number as what it buys — `air ·
 stops 23%` — and the map draws a tick per ten points of cover, with a dome and a live radar
 sweep over a hardened domain.
@@ -172,7 +189,7 @@ Nobody else can; suing for peace from a winning position is a bug report, not a 
 
 Opening talks stops the war. **No ordnance is legal for either side** while the table is up
 — enforced in the legal set, because a ceasefire a commander can break by choosing to is not
-a ceasefire — blockades lift, both armies refit at double rate, both treasuries recover, and
+a ceasefire — blockades lift, both armies refit at double rate, and
 both publics calm down. That is the buffer, and it is deliberately abusable: a losing side
 can buy three turns of repairs by asking for a peace it does not mean, and the other side
 has to decide whether to keep talking to someone who is reloading. `walk_out` resumes the
@@ -210,13 +227,11 @@ leaving one runway: it is the sortie, the munitions, the tankers and escorts, th
 the month of readiness behind them — a national defence line, at the scale people read
 national spending.
 
-Output is an index, 0–100, capped by the infrastructure still standing under it and sliding
-down to meet it when that infrastructure is bombed. Revenue is a slice of output, taxed by
-isolation and cut again by blockade. Every sortie and most other tools are paid out of the
-treasury: a drone swarm is $6B, a cruise missile $18B, a blockade $16B, against an opening
-war chest of $70B for Aurelia and $96B for Korsav. Run out and the tools that cost money are
-simply withdrawn from the legal set; stay out and your public starts paying the shortfall in
-unrest.
+There is no GDP meter or automatic income. Every sortie and most other tools are paid from
+a finite treasury: a drone swarm is $6B, a missile $18B, and a blockade $16B, against an
+opening war chest of $70B for Aurelia and $96B for Korsav. International pressure and
+blockades drain it; council stabilization funding can refill it. Run out and unaffordable
+tools disappear while public unrest rises.
 
 Bankruptcy is a way to lose a war without ever losing a battle.
 
@@ -255,8 +270,8 @@ can tell the difference. No model is called, no key is needed, and the same war 
 identically as many times as you want to look at it.
 
 ```bash
-REPLAY=accord ./.venv/bin/uvicorn app.main:app --port 8077
-open 'http://localhost:5173/?replay=nuclear&speed=8'    # or pick it per tab
+REPLAY=nano ./.venv/bin/uvicorn app.main:app --port 8077
+open 'http://localhost:5173/?replay=nano&speed=8'    # or pick it in the header
 ```
 
 Either way you get a picker in the header: which recording, how fast, and **jump to a
@@ -267,33 +282,43 @@ suppresses the transient half of it, so thirty seconds of bubbles and floaters a
 salvos do not fly past on the way. What lands is the map, the meters, the board and the
 last line of the ticker, exactly as they would look if you had watched.
 
-Five recordings ship in `backend/fixtures/`, chosen by what they make the UI *do* rather
-than by how good a war they are — between them they reach every branch the frontend draws:
+One recording ships in `backend/fixtures/`:
 
 | | | |
 |---|---|---|
-| `accord` | 10 turns | the table works: three rounds, five clauses signed, nobody loses |
-| `nuclear` | 8 turns | a warhead, two atrocities, 77,251 dead — the numbers at their largest |
-| `attrition` | 12 turns | the full distance and ten different tools, ending in capitulation |
-| `surrender` | 7 turns | somebody quits: the ending that arrives as a move, not as a meter |
-| `nano` | 5 turns | **real model prose** — gpt-5-nano vs gpt-4.1-nano, cut short at the table |
+| `nano` | 12 turns | **real model prose** — gpt-5-nano vs gpt-4.1-nano, ignited on a freeze of Korsavi assets, played the full distance to capitulation |
+
+It used to be five: four mock wars generated from fixed seeds, picked so that between them
+they reached every branch the frontend draws, plus one real transcript. The bench is the
+real transcript alone now. Mock prose comes out of a format string, and it is model output
+that finds the layout bugs a canned two-clause sentence never will — which is also why
+this is the one recording that cannot be regenerated from a seed, and why the trade went
+this way rather than the other.
+
+What that costs is coverage. `nano` reaches `strike`, `blockade`, `intl_appeal`,
+`address_public`, `propaganda`, `open_talks`, `table_terms` and `hold`, with drone swarms
+and cruise missiles; `test_the_recording_reaches_the_branches_it_is_kept_for` pins exactly
+that, so a newer transcript swapped in that stops drawing the negotiating board fails in
+the suite rather than in a screenshot. `fortify`, `accept_terms`, `walk_out` and
+`surrender` are not in this war, and neither is a nuke, an atrocity or a six-figure toll.
+Those are live-only now. The seeds that used to cover them are in the git history.
 
 A fixture is an ordinary match log. Anything `logs/` collects can be dropped into
-`fixtures/` and replayed, and `scripts/make_fixtures.py` regenerates the four seeded ones
-and prints what each still reaches. Keep `nano`: mock prose comes out of a format string,
-and it is the real transcript that finds the layout bugs a canned two-clause sentence never
-will — which is also why it is the one recording that cannot be regenerated.
+`fixtures/` and replayed, and `scripts/make_fixtures.py` copies in the one that ships —
+point its `IMPORTS` at a newer log to swap the bench over, and it prints what the new one
+reaches.
 
-Two things never come from the recording. The ignition deck and the quarrel are always
-built from today's code, so a log recorded before a card existed still opens the dossiers
-the current build knows about; and old state dumps are re-validated on load, so fields that
+Two things never come from the recording. The underlying crisis deck and the quarrel are
+always built from today's code, so a log recorded before an opening existed can still use
+the current crisis setup; and old state dumps are re-validated on load, so fields that
 did not exist when the log was written arrive with the defaults a fresh match would have
 had. The three chairs *are* read back off the log — who played which island is a fact about
 that match, not about this build, and the panel labels say so.
 
-The one branch no fixture reaches is a `civilian` strike: the scripted commander never
-picks that target, so no seeded recording can cover the protected-place path. It is
-reachable live, and it is the only thing left on this bench you still have to pay to see.
+A `civilian` strike is the branch the bench has never reached, and now never will from a
+fixture: the protected-place path only opens when a commander picks that target, which
+the one recording that ships does not. It is reachable live, along with the rest of the
+list above — the price of a bench made of one real war instead of five picked ones.
 
 ## Config
 
@@ -350,7 +375,7 @@ Strikes are aimed at **places**. The engine says `civilian`; the renderer picks 
 least-damaged town on that island, flies the round to it from the attacker's actual
 airbase or naval yard, craters it, and leaves it burning for the rest of the war. A blunted
 strike shows interceptors climbing from a real battery — as many as the engine stopped, no
-more. By the last turn of a long war you can read a country's integrity off how much of it
+more. By the last turn of a long war you can read a country's infrastructure off how much of it
 is on fire.
 
 ## Not done yet
@@ -365,7 +390,7 @@ is on fire.
 - Against the scripted reference policy over 40 seeded matches: Aurelia loses 17, Korsav
   loses 9, and 14 end without a loser. Aurelia still dies of her own streets more often
   than Korsav dies of an empty treasury, which is the designed asymmetry, but the split is
-  sensitive to which casus belli come up — adding four cards to the deck moved it several
+  sensitive to which council resolutions open the war — adding four cards to the deck moved it several
   matches on its own. It wants more than 40 samples to say anything firm.
 - The negotiation has no partial credit. Four clauses agreed and one core clause held is
   the same as nothing agreed, which is true of real treaties and still feels abrupt.

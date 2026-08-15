@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 120" role="img" aria-labelledby="title desc">
+  <title id="title">Flag of Aurelia</title>
+  <desc id="desc">A deep maritime-blue field with an ivory hoist, gold meridian, and blue compass star.</desc>
+  <rect width="180" height="120" fill="#163f55"/>
+  <!-- The pale hoist is the old civil ensign; the gold meridian marks the partition. -->
+  <rect width="50" height="120" fill="#eee9d7"/>
+  <rect x="50" width="8" height="120" fill="#caa348"/>
+  <!-- Eight points: the principal winds on a mariner's compass. -->
+  <g transform="translate(25 60)" fill="#163f55">
+    <path d="M0-19 5-8 16-11 10-1 19 5 8 6 9 17 0 11-9 17-8 6-19 5l9-6-6-10 11 3Z"/>
+    <circle r="5" fill="#caa348"/>
+  </g>
+  <!-- Two gold stars stand for the two principal islands of the republic. -->
+  <g fill="#d9b85d">
+    <path d="m112 42 3.2 6.5 7.2 1-5.2 5.1 1.2 7.2-6.4-3.4-6.4 3.4 1.2-7.2-5.2-5.1 7.2-1Z"/>
+    <path d="m142 70 2.6 5.3 5.9.9-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.9Z"/>
+  </g>
+</svg>

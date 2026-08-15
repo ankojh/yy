@@ -63,7 +63,7 @@ def test_a_losing_nation_can():
 
 @pytest.mark.parametrize(
     "field, value",
-    [("integrity", 40), ("morale", 30), ("standing", 30), ("unrest", 70), ("budget", 5)],
+    [("integrity", 40), ("unrest", 70), ("budget", 5)],
 )
 def test_every_kind_of_losing_opens_the_table(field, value):
     """Not only bombardment. A bankrupt or a boiling country wants terms too."""

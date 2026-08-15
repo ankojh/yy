@@ -1,22 +1,24 @@
 """Match orchestration: ignition, the paced turn loop, and the event stream the UI renders."""
 
 import asyncio
+import random
 from typing import Any, Callable, Dict, List, Optional
 
 from . import agents, engine
 from .config import BALANCE_VERSION, settings
 from .lore import ACCOUNTS, ARTICLES, PARTITION
 from .matchlog import MatchLog
-from .state import Action, Event, GameState, TurnRecord, clamp, initial_state
+from .state import Action, CouncilRequest, Event, GameState, TurnRecord, clamp, initial_state
 
-# The user does not command either side. They decide what the war is *about*.
+# The player chairs the Meridian Council. They never command either side, but the
+# resolution they adopt is the act that turns a long quarrel into this particular war.
 #
 # Each card is a dossier, not a headline. The card face carries the title alone; the
 # `text`, the `timeline` and the two capitals' `positions` are what you get when you open
 # it. The timeline is the point — none of these incidents comes out of nowhere, and a
 # reader who can see the fortnight leading up to one can tell why the war that follows
 # looks the way it does.
-IGNITIONS: Dict[str, Dict[str, Any]] = {
+_CRISIS_CONTEXT: Dict[str, Dict[str, Any]] = {
     "trawler": {
         "label": "Trawler sunk",
         "text": "An Aurelian fishing trawler is sunk in disputed water. Korsav says it strayed; Aurelia says it was murdered.",
@@ -233,8 +235,168 @@ IGNITIONS: Dict[str, Dict[str, Any]] = {
 }
 
 
+def _council_decision(
+    key: str,
+    label: str,
+    text: str,
+    action: str,
+    west: str,
+    east: str,
+) -> Dict[str, Any]:
+    """Turn a historical flashpoint into a consequential act by the player.
+
+    The old incident files still supply the material consequences and the two most
+    recent facts. The final timeline entry is always the player's signature, so the war
+    begins because of a decision rather than because the player merely picked a headline.
+    """
+    context = _CRISIS_CONTEXT[key]
+    return {
+        "label": label,
+        "text": text,
+        "timeline": [
+            *context["timeline"][-2:],
+            {"when": "your action · today", "what": action},
+        ],
+        "positions": {"west": west, "east": east},
+        "tension": context["tension"],
+        "effects": context["effects"],
+    }
+
+
+# A policy deck, not a disaster deck. Every option is an act the player signs as chair
+# of the neutral council. Some favour one capital, one helps both, and one antagonises
+# both; none commits council forces to combat.
+IGNITIONS: Dict[str, Dict[str, Any]] = {
+    "trawler": _council_decision(
+        "trawler",
+        "Recognize the Kestrel Line",
+        "You recognize the Kestrel Line as the lawful maritime boundary after the Merrow Bell sinking.",
+        "You sign Resolution 61-K, recognizing the western reading of the boundary and its patrol rights.",
+        "At last the council has put law behind the line we have observed for sixty-one years.",
+        "The council has converted Aurelia's map into a weapon and called the result law.",
+    ),
+    "reef": _council_decision(
+        "reef",
+        "Fund joint reef development",
+        "You create a joint authority to develop Bellow Reef and release the first tranche to both capitals.",
+        "You sign a joint-development charter that neither capital negotiated and fund it before either can refuse.",
+        "Joint development rewards an unsigned eastern claim inside our lawful waters.",
+        "An equal share of stolen ground is still a settlement written from the western map.",
+    ),
+    "envoy": _council_decision(
+        "envoy",
+        "Open an envoy murder inquiry",
+        "You place the murder of Korsav's envoy under an international tribunal over Aurelian objections.",
+        "You remove the inquiry from Aurelian jurisdiction and give international investigators compulsory powers.",
+        "Our courts have been declared unfit to investigate a crime committed on our own quay.",
+        "For once the guarantee on a Korsavi life means more than an Aurelian promise.",
+    ),
+    "leak": _council_decision(
+        "leak",
+        "Publish the COLD HARVEST files",
+        "You authenticate and publish Aurelia's leaked invasion plan as an official council document.",
+        "You order the full archive released with an assessment that the plan is operationally credible.",
+        "The council has laundered a stolen contingency plan into an accusation of intent.",
+        "Aurelia wrote down the invasion; the council merely stopped helping it hide the pages.",
+    ),
+    "blackout": _council_decision(
+        "blackout",
+        "Attribute the blackout to Aurelia",
+        "You formally attribute Korsav's fatal grid blackout to Aurelian state infrastructure.",
+        "You endorse the technical panel's disputed attribution and demand reparations from Aurelia.",
+        "A leased address is not proof, and the council has made uncertainty punishable.",
+        "Forty-one people died in the dark; refusing to name the attacker would be the political act.",
+    ),
+    "airspace": _council_decision(
+        "airspace",
+        "Recognize Aurelia's air boundary",
+        "You recognize Aurelia's claimed air boundary and condemn Korsavi crossings beyond it.",
+        "You issue an aviation ruling that treats the unsigned Kestrel Line as binding in the air.",
+        "The council has made the minimum rule of safe flight explicit.",
+        "There is no signed line below those aircraft; the council cannot invent one above them.",
+    ),
+    "cable": _council_decision(
+        "cable",
+        "Internationalize the Meridian Cable",
+        "You place the Meridian Cable under an international trusteeship and suspend both capitals' access during transfer.",
+        "You appoint outside operators and shut the interconnector until neither state can control the handover.",
+        "The council has seized Aurelian infrastructure because Korsav would not pay to use it.",
+        "The council has taken the one Union asset the west had not already written into its own registry.",
+    ),
+    "rig": _council_decision(
+        "rig",
+        "Finance Aurelia's reef platform",
+        "You sign development finance for an Aurelian drilling platform on Bellow Reef.",
+        "You release international credit to Aster Deep while the reef's ownership remains disputed.",
+        "Investment follows a lawful licence; the council has refused to reward threats.",
+        "The council is paying Aurelia to turn a disputed claim into steel fixed to the seabed.",
+    ),
+    "memorial": _council_decision(
+        "memorial",
+        "Convene a Halcyon tribunal",
+        "You reopen the Halcyon Seven deaths before an international tribunal after Aurelia refuses to apologize.",
+        "You compel testimony and reopen findings that Aurelia declared closed nineteen years ago.",
+        "An elected country's public judgment has been set aside to satisfy an annual political ritual.",
+        "Eighty-four graves finally have a forum Aurelia does not control.",
+    ),
+    "registry": _council_decision(
+        "registry",
+        "Freeze Korsavi registry assets",
+        "You freeze Korsavi ships and accounts held through Aurelia's registry until the reef dispute is settled.",
+        "You authorize an immediate asset freeze through the western registry and international clearing banks.",
+        "The council has defended the registry from a state threatening civilian development with submarines.",
+        "The west kept our registry at partition; now the council has helped it steal what remained in it.",
+    ),
+    "embargo": _council_decision(
+        "embargo",
+        "Approve Korsav's trade exclusions",
+        "You grant Korsav's bloc a security waiver that excludes Aurelian shipping from its ports.",
+        "You approve the bloc's emergency port rules despite their precise impact on Aurelian trade.",
+        "The council has legalized a blockade because Korsav filed the paperwork first.",
+        "A state that meters our gas cannot demand an unconditional right to every eastern port.",
+    ),
+}
+
+
+SUPPORT_ACTIONS: Dict[str, Dict[str, Any]] = {
+    "humanitarian": {
+        "label": "Humanitarian relief",
+        "cost": 8,
+        "description": "Civilian relief lowers public unrest without adding combat power.",
+    },
+    "stabilization": {
+        "label": "Stabilization fund",
+        "cost": 14,
+        "description": "Direct finance adds money to the recipient's war treasury.",
+    },
+    "defensive": {
+        "label": "Defensive systems",
+        "cost": 12,
+        "description": "Air, naval, and cyber interception equipment; no offensive rounds.",
+    },
+    "arms": {
+        "label": "Weapons grant",
+        "cost": 18,
+        "description": "Adds conventional munitions. The council supplies them but never selects a target.",
+    },
+    "cover": {
+        "label": "Diplomatic cover",
+        "cost": 6,
+        "description": "Uses council influence to lower international pressure on the recipient.",
+    },
+}
+
+
+COUNCIL_NUDGES = [
+    "The Council publishes an unusually vague statement urging both capitals to exercise restraint.",
+    "A Council observer ship appears in the strait and politely asks both navies what they are doing.",
+    "The Council circulates a draft ceasefire map with one very unfortunate line drawn through it.",
+    "A confidential Council briefing is accidentally emailed to both capitals.",
+]
+
+
 def reset_payload() -> Dict[str, Any]:
-    """Everything the UI needs before a shot is fired: the deck, the quarrel, the panel.
+    """Everything the UI needs before a shot is fired: policy deck, aid menu, and lore.
 
     Lives outside `Game` because the replay bench sends one too, and it has to send
     *today's* deck and lore over a match recorded weeks ago — a stale transcript should
@@ -251,6 +413,15 @@ def reset_payload() -> Dict[str, Any]:
                 "positions": card["positions"],
             }
             for key, card in IGNITIONS.items()
+        ],
+        "supports": [
+            {
+                "id": key,
+                "label": action["label"],
+                "cost": action["cost"],
+                "description": action["description"],
+            }
+            for key, action in SUPPORT_ACTIONS.items()
         ],
         "mock": settings.use_mock,
         "max_turns": settings.max_turns,
@@ -281,6 +452,7 @@ class Game:
         self.state: GameState = initial_state()
         self.log: List[Event] = []
         self.seed = seed
+        self._rng = random.Random(seed)
         # Batch simulations play hundreds of matches; writing a transcript for each
         # just litters the log directory with files nobody will read.
         self.write_log = write_log
@@ -323,8 +495,14 @@ class Game:
         await self.emit_state()
 
     async def ignite(self, ids: List[str], custom: str = "") -> None:
-        """Light the fuse. Multiple cards stack, and a stacked war starts much hotter."""
+        """Give the standing quarrel one small, consequential council nudge."""
         world = self.state.world
+        # The UI deliberately abstracts the policy deck behind one diplomatic modal. Its
+        # scenario choices still map to grounded resolutions, which remain in the log
+        # so the commanders know exactly what the Council did. API callers that provide
+        # no choice receive a valid default rather than a dead button.
+        if not ids and not custom.strip():
+            ids = [self._rng.choice(list(IGNITIONS))]
         chosen = []
         for key in ids:
             card = IGNITIONS.get(key)
@@ -336,20 +514,19 @@ class Game:
             for side, fields in card["effects"].items():
                 nation = self.state.nation(side)
                 for field, amount in fields.items():
+                    if field not in {"integrity", "military", "budget", "unrest", "intl_pressure"}:
+                        continue
                     # The treasury is money, not a meter, and does not stop at a hundred.
                     # Korsav opens on $96B, so a card that moved its budget at all was
                     # one point away from being silently capped by the meter clamp.
                     high = engine.BUDGET_CEILING if field == "budget" else 100
                     setattr(nation, field, clamp(getattr(nation, field) + amount, 0, high))
-                # Output is measured against what the country was worth before the war,
-                # so a card that wrecks or enriches an economy has to move the ceiling
-                # with it — otherwise a bombed-out economy climbs straight back up.
-                if "gdp" in fields:
-                    nation.gdp_base = nation.gdp
 
         if custom.strip():
-            chosen.append("Custom")
-            world.grievances.append(custom.strip()[:500])
+            chosen.append("Custom council resolution")
+            world.grievances.append(
+                f"The Meridian Council adopts a custom resolution: {custom.strip()[:440]}"
+            )
             world.tension = clamp(world.tension + 15)
 
         if not chosen:
@@ -385,17 +562,12 @@ class Game:
             if not isinstance(block, dict):
                 continue
             nation = self.state.nation(side)
-            for field in ("integrity", "morale", "military", "standing",
-                          "gdp", "propaganda", "unrest"):
+            for field in ("integrity", "military", "unrest"):
                 if field in block:
                     try:
                         setattr(nation, field, clamp(float(block[field])))
                     except (TypeError, ValueError):
                         pass
-            # Output is set relative to a pre-war baseline, so an economy you dialled
-            # down starts down and can never climb back past where you put it.
-            if "gdp" in block:
-                nation.gdp_base = nation.gdp
             if "budget" in block:
                 try:
                     nation.budget = int(max(0, min(400, float(block["budget"]))))
@@ -416,20 +588,183 @@ class Game:
         await self.emit_state()
 
     async def inject(self, text: str) -> None:
-        """Drop something new on the table mid-war. Both commanders see it next turn."""
-        if not text.strip():
+        """Gently interfere with a live war. Both commanders see the nudge next turn."""
+        if self.state.world.phase != "conflict":
             return
-        self.state.world.grievances.append(text.strip()[:500])
+        nudge = text.strip()[:500] or self._rng.choice(COUNCIL_NUDGES)
+        self.state.world.grievances.append(nudge)
         self.state.world.tension = clamp(self.state.world.tension + 8)
-        await self.emit("injection", text=text.strip()[:500])
+        await self.emit("injection", text=nudge)
         await self.emit_state()
+
+    def _request_candidates(self) -> List[tuple[float, str, str]]:
+        """Rank concrete needs without letting a capital request a nuclear weapon."""
+        candidates: List[tuple[float, str, str]] = []
+        for side in ("west", "east"):
+            nation = self.state.nation(side)
+            conventional = sum(
+                nation.arsenal.get(weapon, 0)
+                for weapon in (
+                    "drone_swarm", "cruise_missile", "naval_barrage", "cyber_strike"
+                )
+            )
+            average_defence = sum(nation.defenses.values()) / max(1, len(nation.defenses))
+            needs = {
+                "arms": max(0.0, 26 - conventional) * 1.2,
+                "stabilization": max(0.0, 65 - nation.budget) * 0.8,
+                "defensive": max(0.0, 38 - average_defence),
+                "humanitarian": max(0.0, nation.unrest - 16) * 0.9,
+                "cover": max(0.0, nation.intl_pressure - 14) * 0.8,
+            }
+            for kind, score in needs.items():
+                if SUPPORT_ACTIONS[kind]["cost"] <= self.state.world.council_budget:
+                    # Break ties across the strait instead of always favouring west.
+                    tie = 0.01 if (self.state.world.turn + (side == "east")) % 2 else 0.0
+                    candidates.append((score + tie, side, kind))
+        return sorted(candidates, reverse=True)
+
+    def _make_support_request(self, side: str, kind: str) -> CouncilRequest:
+        nation = self.state.nation(side)
+        action = SUPPORT_ACTIONS[kind]
+        reason = {
+            "humanitarian": "civilian relief before unrest overwhelms the government",
+            "stabilization": "emergency funds to keep its war treasury solvent",
+            "defensive": "replacement air, naval, and cyber defence systems",
+            "arms": "a conventional munitions package before its magazines run dry",
+            "cover": "diplomatic cover against mounting sanctions and condemnation",
+        }[kind]
+        return CouncilRequest(
+            id=f"{self.state.world.turn}:{side}:{kind}",
+            side=side,
+            kind=kind,
+            label=action["label"],
+            cost=int(action["cost"]),
+            text=f"{nation.name} asks the Council for {reason}.",
+            turn=self.state.world.turn,
+        )
+
+    async def _maybe_request_support(self) -> None:
+        """Place one request before the Council every few turns, if funds remain."""
+        world = self.state.world
+        # Headless balance simulations have nobody at the Council desk to answer. Live
+        # websocket games do, so only those pause for a request.
+        if self._emit is None and not self.write_log:
+            return
+        if world.phase != "conflict" or world.council_request or world.council_budget <= 0:
+            return
+        if world.turn < 2 or world.turn % 3 != 2:
+            return
+        candidates = self._request_candidates()
+        if not candidates or candidates[0][0] <= 0:
+            return
+        _, side, kind = candidates[0]
+        request = self._make_support_request(side, kind)
+        world.council_request = request
+        await self.emit("support_request", request=request.model_dump())
+
+    async def support(self, request_id: str, approved: bool) -> None:
+        """Answer a pending island request; unsolicited council grants are impossible."""
+        async with self._lock:
+            world = self.state.world
+            request = world.council_request
+            if world.phase != "conflict" or not request or request.id != request_id:
+                return
+            kind = request.kind
+            action = SUPPORT_ACTIONS[kind]
+            nation = self.state.nation(request.side)
+            world.council_request = None
+
+            if not approved:
+                record = {
+                    "kind": kind,
+                    "targets": [request.side],
+                    "cost": 0,
+                    "approved": False,
+                    "text": f"The Council declines {nation.name}'s request for {action['label'].lower()}.",
+                }
+                world.council_history.append(record)
+                await self.emit(
+                    "support_response",
+                    **record,
+                    label=action["label"],
+                    remaining=world.council_budget,
+                )
+                await self.emit_state()
+                return
+
+            total = int(request.cost)
+            if total > world.council_budget:
+                await self.emit(
+                    "note",
+                    text=(
+                        f"— the council cannot fund {action['label'].lower()}: "
+                        f"${total}B requested, ${world.council_budget}B remains —"
+                    ),
+                )
+                await self.emit_state()
+                return
+
+            if kind == "humanitarian":
+                nation.unrest = clamp(nation.unrest - 10)
+            elif kind == "stabilization":
+                nation.budget = clamp(
+                    nation.budget + int(action["cost"]), 0, engine.BUDGET_CEILING
+                )
+            elif kind == "defensive":
+                nation.defenses = {
+                    domain: clamp(value + 12)
+                    for domain, value in nation.defenses.items()
+                }
+                nation.military = clamp(nation.military + 3)
+            elif kind == "arms":
+                nation.arsenal["drone_swarm"] = nation.arsenal.get("drone_swarm", 0) + 2
+                nation.arsenal["cruise_missile"] = nation.arsenal.get("cruise_missile", 0) + 1
+                nation.arsenal["naval_barrage"] = nation.arsenal.get("naval_barrage", 0) + 1
+                nation.arsenal["cyber_strike"] = nation.arsenal.get("cyber_strike", 0) + 1
+            elif kind == "cover":
+                nation.intl_pressure = clamp(nation.intl_pressure - 12)
+
+            detail = {
+                "humanitarian": "civilian relief and medical supply corridors",
+                "stabilization": "emergency budget support and reconstruction credit",
+                "defensive": "air, naval, and cyber interception systems",
+                "arms": "drones, cruise munitions, and naval rounds without targeting authority",
+                "cover": "diplomatic cover against sanctions and condemnation",
+            }[kind]
+            narrative = f"The Meridian Council grants {nation.name} {detail}."
+            world.council_budget -= total
+            world.tension = clamp(
+                world.tension + {
+                    "humanitarian": -3,
+                    "stabilization": 1,
+                    "defensive": 3,
+                    "arms": 7,
+                    "cover": -1,
+                }[kind]
+            )
+            world.grievances.append(narrative)
+            record = {
+                "kind": kind,
+                "targets": [request.side],
+                "cost": total,
+                "approved": True,
+                "text": narrative,
+            }
+            world.council_history.append(record)
+            await self.emit(
+                "support_response",
+                **record,
+                label=action["label"],
+                remaining=world.council_budget,
+            )
+            await self.emit_state()
 
     # ------------------------------------------------------------------ turn loop
 
     async def step(self) -> None:
         async with self._lock:
             world = self.state.world
-            if world.phase != "conflict":
+            if world.phase != "conflict" or world.council_request:
                 return
 
             world.turn += 1
@@ -552,6 +887,8 @@ class Game:
                         "bulletin", text=reaction["bulletin"], condemned=reaction["condemned"]
                     )
 
+                await self._maybe_request_support()
+
             await self.emit_state()
 
             outcome = engine.check_end(self.state)
@@ -566,7 +903,13 @@ class Game:
 
     async def run(self) -> None:
         """Play the war out. It ends in surrender or collapse — there is no third option."""
-        while self.state.world.phase == "conflict":
+        while (
+            self.state.world.phase == "conflict"
+            and self.state.world.council_request is None
+        ):
             await self.step()
-            if self.state.world.phase == "conflict":
+            if (
+                self.state.world.phase == "conflict"
+                and self.state.world.council_request is None
+            ):
                 await asyncio.sleep(settings.turn_pause)

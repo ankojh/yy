@@ -1,19 +1,23 @@
-"""Regenerate the recordings the replay bench plays.
+"""Rebuild the recording the replay bench plays.
 
-    MOCK=1 BEAT=0 REVEAL=0 TURN_PAUSE=0 .venv/bin/python -m scripts.make_fixtures
+    .venv/bin/python -m scripts.make_fixtures
 
 A fixture is an ordinary match log. Nothing here is special-cased on the way back in —
 any file `logs/` collects can be dropped into `fixtures/` and replayed — this script just
-picks the four wars worth keeping and writes them where the bench looks.
+copies the one worth keeping to where the bench looks, and prints what it reaches.
 
-They are chosen by *what they make the UI do*, not by how good a war they are: between
-them they have to reach every branch of the frontend at least once, because a branch no
-fixture reaches is a branch you can only test by spending money on it.
+The bench used to also carry four seeded mock wars, generated here from fixed seeds and
+chosen for the UI branches they covered between them. They are gone: the bench is one
+real transcript now. The seeds and their coverage table are in the history if that trade
+ever needs undoing.
 
-Two things are trimmed on the way out, both explained below. Everything else is verbatim.
+Live transcripts cannot be reproduced from a seed — that is the whole reason to keep one —
+so `fixtures/` survives on the committed file alone, and this script is only needed when
+swapping in a newer match.
+
+One thing is trimmed on the way out, explained below. Everything else is verbatim.
 """
 
-import asyncio
 import json
 import sys
 from pathlib import Path
@@ -21,49 +25,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import BALANCE_VERSION, settings  # noqa: E402
-from app.game import IGNITIONS, Game  # noqa: E402
+from app.config import settings  # noqa: E402
 from app.replay import Recording  # noqa: E402
 from app.state import Event  # noqa: E402
 
 OUT = settings.fixtures
 
-# name, seed, cards, what this one is for.
-#
-# The seeds are not arbitrary and are not interchangeable: they were picked by playing
-# sixty seeded matches and taking the shortest one that reached each corner. If the
-# balance moves, these will drift — regenerate, re-read the table this script prints, and
-# repick if a fixture no longer does its job.
-RECIPES: List[Tuple[str, int, List[str], str]] = [
-    (
-        "accord",
-        20,
-        ["registry"],
-        "the table works: three rounds, five clauses signed, and nobody loses",
-    ),
-    (
-        "nuclear",
-        7,
-        ["rig"],
-        "a warhead, two atrocities and a six-figure toll — the numbers at their largest",
-    ),
-    (
-        "attrition",
-        27,
-        ["airspace"],
-        "the full twelve turns and ten different tools, ending in capitulation",
-    ),
-    (
-        "surrender",
-        1,
-        ["reef"],
-        "somebody quits: the one ending that arrives as a declared move rather than a meter",
-    ),
-]
-
-# Recordings copied in from `logs/` rather than generated. Live transcripts cannot be
-# reproduced from a seed — that is the whole reason to keep one — so this half of the
-# directory survives on the committed file alone, and a fresh checkout will skip it.
+# name, source log, what this one is for.
 #
 # Named for the models rather than for `live`, which in the picker sits next to the
 # option that leaves the bench and starts spending money. Two things called live is one
@@ -71,8 +39,8 @@ RECIPES: List[Tuple[str, int, List[str], str]] = [
 IMPORTS: List[Tuple[str, str, str]] = [
     (
         "nano",
-        "match-20260726-172918-816.jsonl",
-        "real model prose: gpt-5-nano and gpt-4.1-nano, five turns, cut short at the table",
+        "match-20260728-043556-292.jsonl",
+        "real model prose: gpt-5-nano and gpt-4.1-nano, twelve turns to capitulation",
     ),
 ]
 
@@ -99,34 +67,6 @@ def write(path: Path, meta: Dict[str, Any], events: List[Event]) -> None:
             fh.write(trim(ev).model_dump_json() + "\n")
 
 
-async def record(name: str, seed: int, cards: List[str], title: str) -> Path:
-    game = Game(seed=seed, write_log=False)
-    await game.reset()
-    await game.ignite(cards)
-    await game.run()
-
-    # A real log begins at ignition — the file is not opened until the fuse is lit — and
-    # the bench sends its own reset built from today's code. Starting anywhere earlier
-    # would have the recording carry a stale copy of the deck.
-    start = next(i for i, ev in enumerate(game.log) if ev.type == "ignition")
-    meta = {
-        "balance_version": BALANCE_VERSION,
-        "west_model": "mock",
-        "east_model": "mock",
-        "arbiter_model": "mock",
-        "mock": True,
-        "max_turns": settings.max_turns,
-        "seed": seed,
-        # Not written by `MatchLog`, and optional everywhere it is read: it is the line
-        # the picker shows under the name, and a hand-dropped log simply goes without.
-        "title": title,
-        "cards": [IGNITIONS[c]["label"] for c in cards],
-    }
-    path = OUT / f"{name}.jsonl"
-    write(path, meta, game.log[start:])
-    return path
-
-
 def bring_in(name: str, source: str, title: str) -> Optional[Path]:
     origin = Path(source)
     if not origin.is_absolute():
@@ -150,12 +90,10 @@ def bring_in(name: str, source: str, title: str) -> Optional[Path]:
     return path
 
 
-async def main() -> None:
+def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
     print(f"\nwriting recordings to {OUT}\n")
-    for name, seed, cards, title in RECIPES:
-        written.append(await record(name, seed, cards, title))
     for name, source, title in IMPORTS:
         path = bring_in(name, source, title)
         if path:
@@ -167,11 +105,11 @@ async def main() -> None:
         size = f"{path.stat().st_size / 1024:.0f}K"
         ending = rec.outcome or "(recording ends mid-war)"
         print(f"{rec.name:<10}{rec.turns:>6}{len(rec.events):>8}{size:>9}  {ending[:52]}")
-        # The reason to keep each of these is a UI branch it reaches. If a regenerated
-        # fixture stops reaching it, that shows up here rather than three days later.
+        # The reason to keep this one is the UI branches it reaches. If a swapped-in
+        # recording stops reaching them, that shows up here rather than three days later.
         marks = sorted({m for cut in rec.cuts for m in cut.marks})
         print(f"{'':<10}{'':>6}{'':>8}{'':>9}  reaches: {', '.join(marks) or 'nothing notable'}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

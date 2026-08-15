@@ -100,14 +100,6 @@ button.pill.ghost {
 }
 button.pill.ghost:hover { border-color: var(--line-2); color: var(--ink); }
 
-/* TEMPORARY: the one-click mock run. Tinted so it never reads as part of the game's own
-   controls, and so it is obvious which button to delete later. */
-button.pill.ghost.temp {
-  color: var(--good);
-  border-color: color-mix(in srgb, var(--good) 42%, transparent);
-}
-button.pill.ghost.temp:hover { border-color: var(--good); color: var(--ink); }
-
 /* ---- the replay bench ----
    Three selects dressed as pills, shown only when a recording is loaded. Deliberately
    in the header rather than in a drawer: it is the thing you reach for every thirty
@@ -142,6 +134,7 @@ button.pill.ghost.temp:hover { border-color: var(--good); color: var(--ink); }
 main {
   display: grid;
   grid-template-columns: 292px minmax(0, 1fr) 292px;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 10px;
   padding: 10px;
   flex: 1 1 auto;
@@ -162,7 +155,16 @@ main {
 }
 .nation::-webkit-scrollbar { width: 8px; }
 .nation::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
-.nation h2 { margin: 0 0 2px; font-size: 15px; letter-spacing: 0.05em; }
+.nation h2 { margin: 0; font-size: 15px; letter-spacing: 0.05em; }
+.nation-title { display: flex; align-items: center; gap: 9px; margin-bottom: 3px; }
+.nation-flag {
+  width: 34px;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  border: 1px solid rgba(221, 226, 205, 0.25);
+  border-radius: 2px;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.45);
+}
 .nation .tag {
   font-size: 9.5px;
   color: var(--dim);
@@ -199,15 +201,21 @@ main {
 .fill.spin { background: linear-gradient(90deg, #4d4570, var(--spin)); }
 .fill.hot { box-shadow: 0 0 8px rgba(200, 70, 47, 0.75); }
 
-/* The butcher's bill, beside the tension bar. The only number on screen with no
-   ceiling, so it is a count and never a track. */
+/* The butcher's bill overlays the map. It has no ceiling, so it is a count and never
+   a track—and it no longer steals a row of height from the theatre. */
 .toll {
   display: flex;
   align-items: baseline;
   gap: 8px;
   font-size: 11px;
   color: var(--dim);
-  min-height: 20px;
+}
+.toll:not(:empty) {
+  padding: 5px 8px;
+  border: 1px solid rgba(61, 70, 48, 0.8);
+  border-radius: 4px;
+  background: rgba(10, 13, 8, 0.84);
+  backdrop-filter: blur(3px);
 }
 .toll .lbl { text-transform: uppercase; letter-spacing: 0.12em; font-size: 10px; }
 .toll b { color: #e08a76; font-size: 14px; }
@@ -321,12 +329,12 @@ main {
   gap: 8px;
   min-height: 0;
 }
-.world { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; flex: 0 0 auto; }
-.world label {
-  font-size: 10px;
-  color: var(--dim);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
+.world {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  pointer-events: none;
 }
 
 .outcome {
@@ -362,12 +370,22 @@ main {
   border-radius: 6px;
   padding: 12px;
 }
+.ignition { grid-column: 1 / -1; }
 .ignition h2 {
   margin: 0 0 9px;
   font-size: 11px;
   color: var(--dim);
   text-transform: uppercase;
   letter-spacing: 0.18em;
+  text-align: center;
+}
+.ignition-copy {
+  max-width: 570px;
+  margin: 0 auto 13px;
+  color: #aab296;
+  font-size: 11px;
+  line-height: 1.55;
+  text-align: center;
 }
 .cards {
   display: grid;
@@ -403,7 +421,7 @@ main {
 .card.on .t::before { content: "✓ "; color: var(--warn); }
 
 .row { display: flex; gap: 8px; margin-top: 8px; }
-input {
+input, select, textarea {
   flex: 1;
   min-width: 0;
   background: var(--panel-2);
@@ -414,8 +432,9 @@ input {
   font: inherit;
   font-size: 12px;
 }
-input:focus { outline: none; border-color: var(--line-2); }
-input::placeholder { color: #6d7460; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--line-2); }
+input::placeholder, textarea::placeholder { color: #6d7460; }
+textarea { resize: vertical; line-height: 1.5; }
 
 button {
   background: #1d2416;
@@ -430,6 +449,8 @@ button {
   transition: background 0.15s, border-color 0.15s;
 }
 button:hover { border-color: #55613f; background: #242c1b; }
+button:disabled { cursor: not-allowed; opacity: 0.42; }
+button:disabled:hover { border-color: var(--line-2); background: #1d2416; }
 button.primary {
   background: #3f4f22;
   border-color: #5d7233;
@@ -440,6 +461,113 @@ button.primary:hover { background: #4a5d28; border-color: #748c42; }
 .run { display: flex; flex-direction: column; gap: 8px; }
 .run .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .run .row { margin-top: 0; }
+
+.council-funds {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: 11px;
+}
+.council-funds .lbl { text-transform: uppercase; letter-spacing: 0.12em; font-size: 10px; }
+.council-funds b { color: var(--good); font-size: 12px; }
+
+.crisis-action { display: flex; justify-content: center; width: 100%; }
+.crisis-action > button { min-width: 250px; }
+
+.crisis-file { width: min(820px, 100%); }
+.crisis-file .tag.sep { margin-top: 20px; }
+.scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 9px;
+}
+.scenario-card { min-width: 0; }
+.scenario-option {
+  width: 100%;
+  min-height: 92px;
+  padding: 11px 12px;
+  text-align: left;
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+.scenario-option b { display: block; color: var(--ink); font-size: 12px; }
+.scenario-option span {
+  display: block;
+  margin-top: 5px;
+  color: var(--dim);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+.scenario-option.on { border-color: var(--warn); background: #1a160c; }
+.scenario-card details {
+  margin: 5px 4px 0;
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.scenario-card summary {
+  width: max-content;
+  color: var(--warn);
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.scenario-card details p { margin: 6px 0 2px; }
+.response-field { display: block; margin-top: 18px; }
+.response-field .tag { display: block; margin-bottom: 7px; }
+.response-field select, .response-field textarea { width: 100%; }
+.position-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.position-option {
+  min-height: 48px;
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+#position-west, #position-east {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.position-flag {
+  width: 28px;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  border: 1px solid rgba(221, 226, 205, 0.22);
+  border-radius: 2px;
+}
+.position-option.on { border-color: var(--warn); background: #1a160c; color: #f0e5c5; }
+.response-description {
+  min-height: 3.2em;
+  margin: 7px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.support {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+.support p { margin: 3px 0 0; color: var(--dim); font-size: 10.5px; line-height: 1.45; }
+.support-row { display: flex; align-items: center; gap: 6px; }
+.support-row button { white-space: nowrap; }
+.support-row strong { color: var(--good); font-size: 10.5px; white-space: nowrap; }
+.request-copy { min-width: 0; }
+.support-description {
+  color: var(--dim);
+  font-size: 10px;
+}
 
 /* ---- stage: the map plus everything that floats over it ---- */
 /* Stage owns the height; canvas fills it absolutely so flex min-height:0 cannot
@@ -515,33 +643,6 @@ button.primary:hover { background: #4a5d28; border-color: #748c42; }
 .bubble .verdict { margin-top: 6px; font-size: 10px; font-style: italic; color: var(--dim); }
 .bubble .verdict.bad { color: var(--bad); font-style: normal; }
 
-/* Damage numbers rise off the island that took the hit. */
-.floaters { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
-.floater {
-  position: absolute;
-  transform: translateX(-50%);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-  text-shadow: 0 1px 4px #000, 0 0 10px rgba(0, 0, 0, 0.95);
-  opacity: 0;
-  animation: rise-off 2.6s ease-out forwards;
-}
-.floater.up { color: var(--good); }
-.floater.down { color: #e07a62; }
-/* The dead do not read as a meter tick. Bigger, colder, and they linger. */
-.floater.dead {
-  color: #f0d0c4;
-  font-size: 14px;
-  letter-spacing: 0.03em;
-  animation-duration: 3.4s;
-}
-@keyframes rise-off {
-  0% { opacity: 0; transform: translate(-50%, 10px); }
-  12% { opacity: 1; }
-  70% { opacity: 1; }
-  100% { opacity: 0; transform: translate(-50%, -52px); }
-}
 
 /* ---- the table, drawn on the water between the two islands ---- */
 .talks {
@@ -675,21 +776,16 @@ button.primary:hover { background: #4a5d28; border-color: #748c42; }
 .steps li em { color: var(--west); font-style: normal; }
 .steps::marker { color: var(--warn); }
 
-.intro-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 14px;
-  margin-top: 20px;
+/* The last thing read before the map. One line, above the button it explains. */
+.ends {
+  margin: 20px 0 0;
   padding-top: 18px;
   border-top: 1px solid var(--line);
-}
-.intro-grid p {
-  margin: 5px 0 0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.6;
   color: var(--dim);
 }
-.intro-grid b { color: var(--ink); font-weight: 600; }
+.ends b { color: var(--ink); font-weight: 600; }
 
 #btn-intro {
   margin-top: 22px;
@@ -726,6 +822,24 @@ button.primary:hover { background: #4a5d28; border-color: #748c42; }
 .acct p { margin: 6px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--dim); }
 .acct .one-line { color: #cdd4bb; font-style: italic; }
 .acct .wound { color: #8d7f66; }
+/* What the country is, above what it says. Sits close under the name so it reads as
+   part of the label rather than as the first sentence of the argument. */
+.acct .make {
+  margin-top: 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: #cdd4bb;
+}
+.acct.west .make { color: var(--west); }
+.acct.east .make { color: var(--east); }
+
+/* The half-sentence the two columns add up to. */
+.aside {
+  margin: 12px 0 0;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--dim);
+}
 
 button.link {
   margin-top: 14px;
@@ -791,4 +905,9 @@ button.link:hover { background: none; border: 0; color: #e6c06a; text-decoration
 
 @media (max-width: 1180px) {
   main { grid-template-columns: 240px minmax(0, 1fr) 240px; }
+}
+
+@media (max-width: 720px) {
+  .scenario-grid, .position-grid { grid-template-columns: 1fr; }
+  .scenario-option { min-height: 0; }
 }

@@ -13,9 +13,6 @@ from .engine import (
     TALKS_DEADLOCK_LIMIT,
     may_open_talks,
     strike_interception,
-    trade_factor,
-    turn_income,
-    turn_upkeep,
 )
 from .lore import ARTICLES, CORE_ARTICLES, SETTLEMENT_MINIMUM, article_brief, doctrine_for
 from .state import Action, GameState, Ruling
@@ -195,29 +192,14 @@ def _fatigue_block(me) -> Dict[str, Any]:
 
 
 def _economy_block(me) -> Dict[str, Any]:
-    """What the war costs to keep running, and how long the money lasts."""
-    income = turn_income(me)
-    bill = turn_upkeep(me)
-    net = income - bill
+    """The finite treasury available for actions."""
     return {
-        "output_index": me.gdp,
-        "output_ceiling": min(me.gdp_base, me.integrity),
         "currency": "every money figure in this brief is billions of US dollars",
         "treasury_usd_billions": me.budget,
-        "revenue_next_turn_usd_billions": income,
-        "fixed_upkeep_next_turn_usd_billions": bill,
-        "net_per_turn_before_fighting_usd_billions": net,
-        "share_of_trade_still_open": round(trade_factor(me), 2),
         "note": (
-            "Every strike and most other tools are paid for out of the treasury, in "
-            "billions of dollars. Revenue is your "
-            "output taxed by how isolated you are, so international pressure is an "
-            "economic weapon aimed at you. If the treasury empties, the tools that cost "
-            "money are simply withdrawn and your public starts paying for the shortfall "
-            "in unrest."
-        ),
-        "turns_of_fighting_you_can_still_fund": (
-            "indefinite" if net >= 0 else max(0, me.budget // max(1, -net))
+            "The treasury does not refill automatically. Every paid action spends it, "
+            "international pressure drains it, and an empty treasury withdraws tools "
+            "you can no longer afford."
         ),
     }
 
@@ -228,20 +210,16 @@ def _pressure_block(me) -> Dict[str, Any]:
         "international_pressure": me.intl_pressure,
         "international_note": (
             "Rises with every attack, scaled by how heavy the weapon was and how soft the "
-            "target: hitting civilians costs roughly three times what hitting an airbase "
-            "does, and a warhead is in a category of its own. It cuts your trade and "
-            "therefore your income, and above 40 it bleeds standing every turn. "
-            "intl_appeal is the only instrument that moves it back down."
+            "target. Every 25 points drains $1B per turn, and sanctions make attacks more "
+            "expensive. An international appeal or council intervention can move it."
         ),
         "public_unrest": me.unrest,
         "public_note": (
             "Rises from damage done to your country, from civilian deaths on either side, "
-            "from deficits, and simply from the war going on. At 100 the government falls "
-            "and you have lost. address_public settles it honestly and slowly; propaganda "
-            "freezes it at the cost of your standing abroad."
+            "from an empty treasury, narrative operations, and the war continuing. Your "
+            "island's political character scales every increase. At 100 the government falls."
         ),
-        "propaganda_capability": me.propaganda,
-        "propaganda_campaign_running": me.effects.spin > 0,
+        "narrative_warfare_remaining": me.arsenal.get("narrative", 0),
     }
 
 
@@ -312,7 +290,7 @@ def _talks_block(state: GameState, side: str) -> Dict[str, Any]:
             f"least {SETTLEMENT_MINIMUM - len(CORE_ARTICLES)} more clause(s)."
         ),
         "what_this_ceasefire_is_worth_to_you": (
-            "Both sides refit heavily and both treasuries recover every round it holds. "
+            "Both sides refit heavily and both publics calm every round it holds. "
             "If you are the weaker side, every empty round is a round you needed. If you "
             "are the stronger side, every empty round is one you are giving away."
         ),
@@ -361,10 +339,8 @@ def _brief(state: GameState, side: str, legal: List[str]) -> str:
             "turns_remaining": settings.max_turns - world.turn,
             "who_you_are": me.blurb,
             "your_state": {
-                "morale": me.morale,
                 "military": me.military,
-                "standing": me.standing,
-                "integrity": me.integrity,
+                "infrastructure": me.integrity,
                 "defenses": me.defenses,
             },
             "your_war_economy": _economy_block(me),
@@ -378,23 +354,23 @@ def _brief(state: GameState, side: str, legal: List[str]) -> str:
             "your_arsenal_rounds_left": me.arsenal,
             # Deliberately coarse: you never see the enemy's real numbers. Their warhead
             # count is the exception — deterrence only works if it is visible. Their
-            # public mood is filtered through their own media, so a well-spun enemy
-            # reads calmer than it is.
+            # public mood remains a coarse band rather than an exact number.
             "enemy_intelligence": {
                 **foe.coarse(),
                 "nuclear_warheads_remaining": foe.arsenal.get("nuke", 0),
-                "caveat": (
-                    "public_mood is what their broadcasters let you see. A nation running "
-                    "a propaganda campaign is more restive than it looks."
-                ),
+                "caveat": "public_mood is a coarse external estimate, not an exact meter.",
             },
-            "world": {"tension": world.tension},
+            "world": {
+                "tension": world.tension,
+                "council_funds_remaining_usd_billions": world.council_budget,
+                "recent_council_support": world.council_history[-4:],
+            },
             "grievances_so_far": world.grievances[-6:],
             "war_log": _war_log(state, side),
             "how_this_war_ends": {
                 "you_lose_if": (
-                    "your integrity, morale OR standing reaches 0, or your public unrest "
-                    "reaches 100 and the government falls"
+                    "your infrastructure reaches 0, or public unrest reaches 100 and "
+                    "the government falls"
                 ),
                 "they_lose_if": "the same happens to them",
                 "nobody_loses_if": (
@@ -402,12 +378,10 @@ def _brief(state: GameState, side: str, legal: List[str]) -> str:
                     "only ending that is not a defeat for somebody."
                 ),
                 "targeting": (
-                    "Military capacity regenerates every single turn, so striking it only "
-                    "delays them — it can never win the war. 'infrastructure' strikes "
-                    "reduce integrity AND their economic output, which is how you take "
-                    "away their ability to pay for the war. 'civilian' strikes break "
-                    "morale and inflame their streets, at ruinous cost to your standing, "
-                    "your international pressure and some unrest of your own — and they "
+                    "Military capacity regenerates every turn, so striking it only delays "
+                    "them. 'infrastructure' strikes directly approach a win. 'civilian' "
+                    "strikes inflame their streets, at ruinous cost to your international "
+                    "pressure and some unrest of your own — and they "
                     "kill people by the hundred, which the world counts."
                 ),
                 "defence": (
@@ -418,10 +392,10 @@ def _brief(state: GameState, side: str, legal: List[str]) -> str:
                     "true of you: fortify is not a wasted turn, it is a permanent tax on "
                     "everything they fire at you afterwards."
                 ),
-                "standing": (
-                    "Standing falls a little every time you attack and never recovers on "
-                    "its own. intl_appeal is the only way to raise it; address_public and "
-                    "propaganda are the only ways to work on your own public."
+                "pressure": (
+                    "International pressure drains treasury and makes attacks expensive. "
+                    "intl_appeal moves it onto the enemy; narrative warfare raises enemy "
+                    "unrest but add pressure to you."
                 ),
                 "attrition": (
                     "blockade damages them every turn for three turns while you do "
@@ -455,12 +429,12 @@ def _warnings(me, state: Optional[GameState] = None) -> List[str]:
             "You are weak enough to ask for terms, which means the table is open to you "
             "and a ceasefire would refit your army faster than any turn of fighting."
         )
-    for field in ("integrity", "morale", "standing"):
+    for field in ("integrity",):
         value = getattr(me, field)
         if value <= 20:
-            out.append(f"CRITICAL: your {field} is {value}. At 0 you lose the war.")
+            out.append(f"CRITICAL: your infrastructure is {value}. At 0 you lose the war.")
         elif value <= 40:
-            out.append(f"WARNING: your {field} is {value} and falling.")
+            out.append(f"WARNING: your infrastructure is {value} and falling.")
 
     if me.unrest >= 78:
         out.append(
@@ -472,11 +446,11 @@ def _warnings(me, state: Optional[GameState] = None) -> List[str]:
 
     if me.intl_pressure >= 70:
         out.append(
-            f"CRITICAL: international pressure is {me.intl_pressure}. Your trade is nearly "
-            "gone and your standing is bleeding every turn."
+            f"CRITICAL: international pressure is {me.intl_pressure}. It is draining your "
+            "treasury and making every sanctioned attack more expensive."
         )
     elif me.intl_pressure >= 45:
-        out.append(f"WARNING: international pressure is {me.intl_pressure}; income is being taxed.")
+        out.append(f"WARNING: international pressure is {me.intl_pressure}; treasury is draining.")
 
     if me.effects.deficit_turns > 0:
         out.append(
@@ -552,9 +526,9 @@ MOCK_LINES: Dict[str, List[str]] = {
         "Hold. We have buried worse than this and gone on.",
     ],
     "spin": [
-        "The broadcasts will carry the truth as we understand it.",
-        "Our people will hear this from us before they hear it from them.",
-        "Every screen in the country, every hour. Let them see whose war this is.",
+        "Their public deserves to know what their government has done in its name.",
+        "Put the names and the numbers onto every channel they still receive.",
+        "Let their streets hear the part their government keeps editing out.",
     ],
     "hold": [
         "We regroup. Nothing more.",
@@ -607,12 +581,13 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
 
     Not a placeholder: this is the reference policy the balance is tuned against, so it
     has to reach for every mechanic the way a competent player would. It defends the
-    domain it is actually being hit through, banks morale before it is needed, uses the
-    council when it has a real grievance, silences its own streets when they are about
+    domain it is actually being hit through, uses the council when it has a real
+    grievance, settles its own streets when they are about
     to end the war, watches the ledger, and never strikes on reflex when the strike
     would land tired.
     """
     me = state.nation(side)
+    foe = state.foe(side)
     loaded = loaded_weapons(
         me.arsenal, me.military, me.strike_streak,
         me.effects.sanctioned > 0, me.effects.blockaded > 0, me.budget,
@@ -626,7 +601,7 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
                       args={**args, "message": _rng.choice(MOCK_LINES[line])},
                       intent=intent, reasoning=why)
 
-    if "surrender" in legal and (me.integrity < 18 or me.morale < 12 or me.unrest > 92):
+    if "surrender" in legal and (me.integrity < 18 or me.unrest > 92):
         return act("surrender", "surrender",
                    "finish", "Collapse imminent.", acknowledge="I ACCEPT DEFEAT")
 
@@ -641,26 +616,10 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
         return act("strike", "nuke",
                    "escalate", "Last resort.", weapon="nuke", target="infrastructure")
 
-    # The streets are about to end the war before the enemy does. Honest persuasion is
-    # slower than a broadcast, so which one you reach for depends on how bad it is —
-    # and on whether anyone at home would believe you.
-    believed = me.traits.propaganda_reach >= 0.8
-    if me.unrest >= 62 and "propaganda" in legal and believed:
-        return act("propaganda", "spin",
-                   "control", "The streets will end this before they do.")
+    # The streets are about to end the war before the enemy does.
     if me.unrest >= 62 and "address_public" in legal:
         return act("address_public", "rally",
                    "recover", "The streets will end this before they do.")
-    # A republic reaches for the broadcast last, and only once honesty has run out of
-    # road — but it does reach for it, because the alternative is losing the government.
-    if me.unrest >= 74 and "propaganda" in legal:
-        return act("propaganda", "spin",
-                   "control", "Persuasion has failed. Take the airwaves.")
-
-    # The home front is about to break and nothing else matters this turn.
-    if "address_public" in legal and me.morale < 32:
-        return act("address_public", "rally",
-                   "recover", "The home front is cracking.")
 
     # Ask for terms while there is still something to trade. A ceasefire refits the army
     # faster than any turn of fighting, so the cheapest way out of a losing position is
@@ -670,7 +629,7 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
     # that goes to the table with a boiling public cannot concede anything once it gets
     # there, which makes it a government that has bought a ceasefire it cannot spend.
     if "open_talks" in legal and (
-        me.integrity < 52 or me.morale < 38 or me.unrest > 60 or me.military < 24
+        me.integrity < 52 or me.unrest > 60 or me.military < 24
     ):
         return act("open_talks", "sue", "settle",
                    "Losing, and the table refits faster than we do.")
@@ -697,14 +656,14 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
         return act("hold", "austerity" if me.budget < 14 else "hold",
                    "recover", "Depleted." if me.military < 22 else "The treasury is empty.")
 
-    # Standing never recovers on its own, so a bleeding reputation with a real grievance
-    # to point at is the one case where the council outranks everything else. If they
-    # have flattened a school, that is the grievance — name it rather than gesturing.
-    if "intl_appeal" in legal and me.standing < 50 and _has_grievance(state, side):
+    if "intl_appeal" in legal and me.intl_pressure >= 35 and _has_grievance(state, side):
         outrage = _worst_atrocity(state, side)
         return act("intl_appeal", "atrocity" if outrage else "appeal", "legitimacy",
                    f"They hit {outrage.place}; {outrage.dead:,} dead."
-                   if outrage else "Our standing is bleeding and they have handed us a case.")
+                   if outrage else "They have given us a case and pressure is mounting.")
+
+    if "propaganda" in legal and foe.unrest >= 24:
+        return act("propaganda", "spin", "control", "Push their streets closer to rupture.")
 
     # Sustained pressure while we refit — the best use of a turn we cannot attack in,
     # so it is checked before the defensive options.
@@ -726,20 +685,9 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
                    f"They hit {outrage.place}; {outrage.dead:,} dead."
                    if outrage else "They have given us something to point at.")
 
-    # Bank morale before it is urgent, once the cheap options are spent.
-    if "address_public" in legal and (me.morale < 55 or me.effects.morale_buffer == 0):
+    if "address_public" in legal and me.unrest >= 38:
         return act("address_public", "rally",
-                   "recover", "Bank a buffer while it is quiet.")
-
-    # A campaign started before the streets fill is worth more than one started after,
-    # but only for a state whose own people still listen to it.
-    if (
-        "propaganda" in legal
-        and me.effects.spin == 0
-        and me.unrest >= 34
-        and me.traits.propaganda_reach >= 0.8
-    ):
-        return act("propaganda", "spin", "control", "Get ahead of the mood.")
+                   "recover", "Keep the streets from becoming the decisive front.")
 
     # Still armed and merely tired: a 60% strike beats doing nothing at all.
     if "strike" in legal and conventional:
@@ -768,7 +716,7 @@ def _mock_at_the_table(state: GameState, side: str, legal: List[str], act) -> Ac
     foe = state.foe(side)
 
     def footing(n) -> int:
-        return n.integrity + n.morale + n.military - n.unrest
+        return n.integrity + n.military + min(n.budget, 100) - n.unrest
 
     mine, theirs = footing(me), footing(foe)
 
@@ -785,11 +733,8 @@ def _mock_at_the_table(state: GameState, side: str, legal: List[str], act) -> Ac
     # them further, so it spends the round on its public instead — which is precisely
     # how a negotiation stalls without anybody intending to stall it.
     if me.unrest >= 58:
-        if "address_public" in legal and me.traits.propaganda_reach < 0.8:
+        if "address_public" in legal:
             return act("address_public", "rally", "recover",
-                       "Cannot sign anything with the streets like this.")
-        if "propaganda" in legal and me.effects.spin == 0:
-            return act("propaganda", "spin", "control",
                        "Cannot sign anything with the streets like this.")
 
     # Their standing demand completes the treaty, and another month costs more than the
@@ -824,7 +769,7 @@ def _mock_position(state: GameState, side: str) -> tuple:
     talks = state.world.talks
     settled = settled_articles(state)
 
-    hurt = (100 - me.integrity) + max(0, 60 - me.morale) + max(0, me.unrest - 40)
+    hurt = (100 - me.integrity) + max(0, me.unrest - 40)
     allowance = int(hurt / 30)
     if me.unrest > 66:
         allowance -= 1   # the streets will not stand for another humiliation this week
@@ -896,9 +841,8 @@ def _pick_weapon(state: GameState, side: str, choices: List[str]) -> str:
         # heaviest thing that finishes the job of isolating you.
         return min(pool, key=lambda w: (WEAPONS[w]["weight"], -WEAPONS[w]["damage"]))
 
-    # Can the treasury stand a heavy round and still fund the turns that follow it?
-    runway = turn_income(me) - turn_upkeep(me)
-    rich = me.budget >= 3 * max(WEAPONS[w]["price"] for w in pool) or runway >= 12
+    # Can the finite treasury stand a heavy round and still fund later turns?
+    rich = me.budget >= 3 * max(WEAPONS[w]["price"] for w in pool)
     # How hard price weighs on the choice. A rich cabinet buys the best round; a poor
     # one buys the best round it can keep buying. A straight damage-per-dollar ratio is
     # as degenerate as straight damage — it emptied one rack and left the others full.
@@ -923,15 +867,14 @@ COMMAND_DOCTRINE = (
     "not to be agreeable. Your public claims are judged for credibility by a neutral "
     "arbiter — lying is permitted, but being caught is expensive.\n\n"
     "You are fighting a campaign, not a single turn:\n"
-    "  · Resources do not come back. Munitions are never resupplied and standing never "
-    "recovers on its own. Spending everything early is how commanders lose from ahead.\n"
+    "  · Resources do not come back automatically. Munitions and treasury funds are "
+    "finite. Spending everything early is how commanders lose from ahead.\n"
     "  · You are also fighting a budget. Every sortie has a price in dollars — all money "
-    "in your brief is billions of USD — and your revenue is "
-    "taxed by how isolated the world has decided you are. An enemy who bankrupts you has "
-    "beaten you without taking a city.\n"
+    "in your brief is billions of USD. International pressure drains that treasury, and "
+    "an enemy who bankrupts you can stop you fighting without taking a city.\n"
     "  · You have two publics: the world's and your own. The first can strangle your "
-    "economy, the second can end your government. They pull in opposite directions — "
-    "silencing your own people costs you credibility abroad.\n"
+    "treasury, the second can end your government. Narrative warfare can push the "
+    "enemy's public toward revolt but increase pressure on you.\n"
     "  · Repetition is punished. Striking on consecutive turns exhausts your forces and "
     "the arbiter marks predictable patterns down. Read your own last actions in the "
     "brief before you choose.\n"
@@ -1076,6 +1019,8 @@ async def arbitrate(state: GameState, actions: List[Action]) -> Dict[str, Any]:
             "aurelia": state.west.model_dump(),
             "korsav": state.east.model_dump(),
             "tension": state.world.tension,
+            "council_funds_remaining_usd_billions": state.world.council_budget,
+            "council_support": state.world.council_history[-6:],
         },
         "narrative_so_far": state.world.grievances[-8:],
         # The arbiter is the only party that sees the war unredacted.
@@ -1124,7 +1069,7 @@ def _futile(state: GameState, action: Action) -> bool:
     top of one that is already running.
     """
     if action.tool == "propaganda":
-        return state.nation(action.side).effects.spin > 0
+        return state.foe(action.side).unrest >= 98
     if action.tool != "strike":
         return False
     foe = state.foe(action.side)

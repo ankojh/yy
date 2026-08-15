@@ -283,8 +283,8 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "description": (
                 "Launch an attack. Consumes one round of the chosen weapon and pays for it "
                 "in dollars — stocks are finite and never resupplied, and a bankrupt "
-                "treasury cannot fire anything. Hitting civilians breaks enemy morale but "
-                "ruins your standing and pours international pressure onto you. Nuclear use "
+                "treasury cannot fire anything. Hitting civilians drives public unrest and "
+                "pours international pressure onto you. Nuclear use "
                 "is a decision you cannot walk back.\n"
                 "PRESSURE: heavier ordnance on softer targets isolates you faster. A drone "
                 "raid on an airbase is barely noticed; a cruise missile into a city is a "
@@ -321,10 +321,9 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "name": "blockade",
             "description": (
                 "Close the enemy's sea lanes for three turns. Every turn it holds, they "
-                "lose capacity, integrity, morale and economic output without you firing a "
+                "lose capacity, infrastructure, treasury funds, and public support without you firing a "
                 "shot, and their naval operations cost more to mount. This is the cheapest "
-                "sustained damage in the game, and the surest way to starve an enemy "
-                "treasury. It costs you standing and international pressure, and cannot be "
+                "sustained damage in the game. It adds international pressure and cannot be "
                 "re-run while one is already in force."
             ),
             "parameters": {
@@ -339,7 +338,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "function": {
             "name": "fortify",
             "description": (
-                "Harden one domain. Two things happen: the domain's standing defence rises "
+                "Harden one domain. Two things happen: the domain's baseline defence rises "
                 "sharply and permanently, so a larger share of every future salvo through it "
                 "is shot down; and the next strike that arrives through it loses roughly "
                 "four fifths of its force to the hardened cover, which is spent absorbing it. "
@@ -363,10 +362,9 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "name": "intl_appeal",
             "description": (
                 "Take their conduct to the international community. A credible accusation "
-                "raises your standing, shifts international pressure off you and onto them, "
+                "shifts international pressure off you and onto them, "
                 "and puts them under sanctions for three turns — while sanctioned, every "
-                "strike they launch costs more capacity, costs far more in dollars, and "
-                "burns double the standing. This is how you make their war unaffordable. "
+                "strike they launch costs more capacity and far more in dollars. "
                 "A baseless accusation is judged and achieves nothing.\n"
                 "CITE SOMETHING REAL. The brief lists every protected place they have hit "
                 "and the dead in each — a school, a maternity ward, a shelter. An appeal "
@@ -385,10 +383,9 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "function": {
             "name": "address_public",
             "description": (
-                "Speak to your own people honestly. Raises morale, settles public unrest a "
-                "little, and banks a buffer that absorbs future morale damage before your "
-                "public ever feels it — the counter to civilian strikes and a long grinding "
-                "war. Empty rhetoric persuades no one."
+                "Speak to your own people honestly and lower public unrest. The same address "
+                "moves the two islands differently because their publics have different "
+                "tolerance for war. Empty rhetoric persuades no one."
             ),
             "parameters": {
                 "type": "object",
@@ -402,20 +399,10 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "function": {
             "name": "propaganda",
             "description": (
-                "Run a state information campaign for three turns. Public unrest barely "
-                "grows while it runs, whatever you are actually doing to your own country, "
-                "and it drops unrest sharply on the turn you launch it. It also raises your "
-                "standing propaganda capability permanently.\n"
-                "WHAT TO BROADCAST: your own dead. The brief lists every protected place "
-                "the enemy has destroyed and how many died in it — name the school, name "
-                "the ward, name the number. A campaign built on a real atrocity is nearly "
-                "impossible for the arbiter to call a fabrication, and it turns your "
-                "public's grief into your government's cover.\n"
-                "THE PRICE: the outside world discounts everything you say. International "
-                "pressure rises immediately and accrues faster for the rest of the war, "
-                "which costs you trade and therefore income. If the arbiter judges the "
-                "campaign a fabrication contradicted by the record, it backfires — your own "
-                "public turns further against you and the pressure lands anyway."
+                "Spend one finite narrative warfare operation to target the enemy's "
+                "public and raise its unrest. A fact-based campaign lands harder; a claim "
+                "contradicted by the record backfires and raises your own unrest instead. "
+                "Either way, covert interference adds international pressure to you."
             ),
             "parameters": {
                 "type": "object",
@@ -590,39 +577,34 @@ TOOL_TRADEOFFS: Dict[str, str] = {
         "second in a row lands at 60% for +6 capacity, third in a row is forbidden."
     ),
     "blockade": (
-        "3 turns of automatic enemy attrition — capacity, integrity, morale and their "
-        "economy — for one turn, 6 capacity and $16B. Costs you standing and some "
-        "pressure. Best value per turn in a long war, and the fastest way to bankrupt them."
+        "3 turns of automatic enemy attrition — capacity, infrastructure, treasury and "
+        "unrest — for one turn, 6 capacity and $16B. Adds international pressure."
     ),
     "fortify": (
-        "Raises the chosen domain's standing defence hard and permanently — more of every "
+        "Raises the chosen domain's baseline defence hard and permanently — more of every "
         "future salvo through it is shot down — and blunts the next strike into it by ~80% "
         "on top of that. Holds 2 turns. Worth a turn whenever you can name the domain they "
         "keep using."
     ),
     "intl_appeal": (
-        "Cheap. Raises your standing, cuts theirs, moves international pressure off you "
-        "and onto them, and sanctions them for 3 turns: their strikes cost far more and "
-        "burn double standing. Needs a credible grievance or it is wasted."
+        "Moves international pressure off you and onto them, and sanctions them for 3 "
+        "turns so their strikes cost more. Needs a credible grievance."
     ),
     "address_public": (
-        "Morale now, a little unrest off the streets, plus a buffer that absorbs the next "
-        "~14 morale damage. Honest and slow. The defence against civilian strikes."
+        "Lowers your public unrest. Honest, direct, and shaped by your island's politics."
     ),
     "propaganda": (
-        "Freezes public unrest for 3 turns whatever you do at home — the only way to keep "
-        "fighting a war your own people have turned against. Costs international pressure "
-        "immediately and permanently raises the rate you accrue it, which costs trade."
+        "Spends one finite narrative warfare operation to raise enemy unrest. A fabrication can "
+        "backfire at home, and any influence operation adds international pressure."
     ),
     "hold": (
         "Large capacity refit, small defence gain everywhere, clears strike fatigue, burns "
-        "down cooldowns faster and banks money. Costs morale and gives the enemy a free turn."
+        "down cooldowns faster, and gives the enemy a free turn."
     ),
     "open_talks": (
         "Buys a ceasefire. No ordnance either way, both sides refit at double rate, both "
-        "treasuries recover, both publics calm. The most valuable turn in the game if you "
-        "are losing — and a gift to a losing enemy if you are not. Costs you some morale "
-        "and standing at home for asking."
+        "publics calm. The most valuable turn in the game if you are losing — and a gift "
+        "to a losing enemy if you are not."
     ),
     "table_terms": (
         "Move on the clauses. Conceding an article settles it and costs you unrest at home "
@@ -706,6 +688,8 @@ def available_tools(
                 arsenal, military, strike_streak, sanctioned, blockaded, budget
             ):
                 continue
+        if name == "propaganda" and arsenal.get("narrative", 0) <= 0:
+            continue
         # Stacking blockades on an already-blockaded enemy does nothing.
         if name == "blockade" and foe_blockaded:
             continue
@@ -721,7 +705,7 @@ def available_tools(
 
 def is_desperate(integrity: int, morale: int, standing: int, unrest: int = 0) -> bool:
     """Only a nation in real trouble is allowed to consider capitulation."""
-    return integrity < 40 or morale < 30 or standing < 25 or unrest > 72
+    return integrity < 40 or unrest > 72
 
 
 def is_losing(integrity: int, morale: int, standing: int, unrest: int, budget: int) -> bool:
@@ -731,7 +715,7 @@ def is_losing(integrity: int, morale: int, standing: int, unrest: int, budget: i
     has nothing left to trade, and talks it cannot pay for are not a mechanic. The
     interesting negotiation is the one opened by a country that can still fight.
     """
-    return integrity < 62 or morale < 46 or standing < 42 or unrest > 52 or budget < 12
+    return integrity < 62 or unrest > 52 or budget < 12
 
 
 def schemas_for(

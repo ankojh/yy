@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>war machines</title>
+    <title>YY | War Machines</title>
     <!-- The mark is the brand now, in the tab as well as in the header. Cut square from
          the header lockup and down to 128px: both source images are 2:1 or 3:1 and 1.5MB,
          and a browser handed one of those squashes a pair of drones into sixteen pixels
@@ -17,18 +17,18 @@
          page is somebody's first, and the rules are short enough to reread. -->
     <div class="intro" id="intro">
       <div class="intro-card" role="dialog" aria-modal="true" aria-labelledby="intro-title">
-        <div class="tag">a war you do not command</div>
+        <div class="tag">you chair the Meridian Council</div>
         <h2 id="intro-title">war machines</h2>
         <p class="lede">
-          Two island nations hate each other. Two language models command them. A third
-          judges every move either one makes. You are none of the three.
+          Two island nations hate each other. Two language models command them and a third
+          judges their moves. You lead the international body whose decision breaks the
+          deadlock—and starts the war.
         </p>
 
         <ol class="steps">
           <li>
-            <b>Choose what the war is about.</b> Pick one or more of the cards below the
-            map — they stack, and a stacked war starts much hotter — or write your own.
-            Then <b>ignite</b>.
+            <b>Choose how the Council responds.</b> The Council adopts a formal position on recent
+            developments. One capital welcomes it, the other does not, and the crisis begins.
           </li>
           <li>
             <b>Watch.</b> Each side declares one action per turn and holds the stage for
@@ -37,8 +37,9 @@
             there for the rest of the war.
           </li>
           <li>
-            <b>Interfere, if you like.</b> <em>inject</em> drops a new event on the table
-            mid-war. Both commanders see it on their next turn.
+            <b>Answer the phone.</b> When an island needs relief, funds, defenses, weapons,
+            or diplomatic cover, it asks. You may approve or decline; you never choose a
+            target, issue a combat order, or join either side.
           </li>
         </ol>
 
@@ -55,6 +56,7 @@
           <div class="two-accounts">
             <div class="acct west">
               <div class="tag">Aurelia — the Charter of Kestrel</div>
+              <p class="make">Rich, trades for a living, answers to a free press.</p>
               <p>
                 A government its people cannot remove is not a country. Korsav is a
                 garrison sitting on a population, and forty years of buying its gas has
@@ -63,6 +65,7 @@
             </div>
             <div class="acct east">
               <div class="tag">Korsav — the Long Ledger</div>
+              <p class="make">Poor, heavily armed, believed at home.</p>
               <p>
                 Sovereignty is not granted by anyone's approval. Aurelian rights talk is
                 the etiquette of the party that took the shelf and then wrote the law
@@ -70,35 +73,14 @@
               </p>
             </div>
           </div>
+          <p class="aside">Neither can fight the other's war.</p>
           <button id="btn-quarrel" class="link">read the whole sixty-one years →</button>
         </div>
 
-        <div class="intro-grid">
-          <div>
-            <div class="tag">the two countries are different</div>
-            <p>
-              Aurelia is rich, trades for a living, and answers to a free press. Korsav is
-              poor, heavily armed, and believed at home. Neither can fight the other's war.
-            </p>
-          </div>
-          <div>
-            <div class="tag">two pressures, pulling apart</div>
-            <p>
-              <b>International pressure</b> is what the world does to you — it taxes your
-              trade. <b>Public unrest</b> is what your own people do to you. Propaganda
-              quiets one by feeding the other.
-            </p>
-          </div>
-          <div>
-            <div class="tag">how it ends</div>
-            <p>
-              Integrity, morale or standing at zero. Unrest at a hundred and the
-              government falls. Somebody signs a capitulation — or, if a losing side sues
-              for terms and the clauses can be agreed, both of them sign an accord and
-              nobody loses at all.
-            </p>
-          </div>
-        </div>
+        <p class="ends">
+          <b>How it ends.</b> A nation breaks when its infrastructure hits zero or public
+          unrest reaches a hundred—or both sides sign an accord and nobody loses at all.
+        </p>
 
         <button id="btn-intro" class="primary">understood — take me to the map</button>
       </div>
@@ -134,13 +116,8 @@
           </div>
           <span id="mode" class="pill">connecting</span>
           <span id="turn" class="pill">turn 0</span>
+          <span class="pill council-funds" id="council-funds"></span>
           <span id="phase" class="pill">briefing</span>
-          <!-- TEMPORARY. One click: load a recording, ignite it, run it. Nothing to
-               pick, nothing to spend. Delete this button, the `#btn-mock` block in
-               main.ts, and `.pill.temp` in styles.css to take it back out. -->
-          <button id="btn-mock" class="pill ghost temp hidden" title="play a recorded match — no API calls">
-            ▶ mock run
-          </button>
           <button id="btn-help" class="pill ghost" title="what is this?">?</button>
         </div>
       </header>
@@ -154,60 +131,149 @@
         <section class="theatre">
           <div class="stage">
             <canvas id="map"></canvas>
-            <!-- Speech sits over each island; damage floats off it; the world speaks
-                 along the bottom. -->
+            <!-- Speech sits over each island; the world speaks along the bottom. The
+                 damage numbers are the panels' job, not the map's. -->
             <div class="bubble west" id="bubble-west"></div>
             <div class="bubble east" id="bubble-east"></div>
-            <div class="floaters" id="floaters"></div>
             <!-- The table, when there is one. Sits over the strait between the two
                  islands, because that is where it belongs. -->
             <div class="talks hidden" id="talks"></div>
             <div class="ticker" id="ticker"></div>
             <div id="outcome" class="outcome hidden"></div>
+            <!-- Casualties remain visible without reserving a strip below the map. -->
+            <div class="world">
+              <div class="toll" id="w-toll"></div>
+            </div>
           </div>
 
-          <!-- Tension is the only thing left that belongs to the world; isolation is
-               earned per capital and is already drawn in both panels. The dead are a
-               world-level fact too, and the only number here with no ceiling. -->
-          <div class="world">
-            <div class="meter">
-              <label>tension</label>
-              <div class="track"><div class="fill tension" id="w-tension"></div></div>
-            </div>
-            <div class="toll" id="w-toll"></div>
-          </div>
-
-          <section class="controls">
-            <div class="ignition" id="ignition">
-              <h2>ignite the conflict — click a card to read the file</h2>
-              <!-- On the bench the war has already been fought, and no card on the deck
-                   can change which one plays. Better to say so here than to let somebody
-                   pick three and wonder why they got a fourth. -->
-              <p class="replay-note hidden" id="replay-note"></p>
-              <div class="cards" id="cards"></div>
-              <div class="row">
-                <input id="custom" placeholder="or write your own casus belli…" />
-                <button id="btn-ignite" class="primary">ignite</button>
-              </div>
-            </div>
-
+          <section class="controls hidden" id="conflict-controls">
             <div class="run hidden" id="run-controls">
               <div class="buttons">
-                <button id="btn-step">step turn</button>
-                <button id="btn-run" class="primary">run to conclusion</button>
-                <button id="btn-pause">pause</button>
-                <button id="btn-reset">reset</button>
+                <button id="btn-step">one more turn</button>
+                <button id="btn-run" class="primary">let it unfold</button>
+                <button id="btn-pause">hold that thought</button>
+                <button id="btn-inject">gently interfere</button>
+                <button id="btn-reset">start over</button>
               </div>
-              <div class="row">
-                <input id="inject" placeholder="inject an event mid-war…" />
-                <button id="btn-inject">inject</button>
+              <div class="support hidden" id="support-controls">
+                <div class="request-copy">
+                  <div class="tag" id="support-kicker">incoming request</div>
+                  <p id="support-description"></p>
+                </div>
+                <div class="support-row">
+                  <strong id="support-cost"></strong>
+                  <button id="btn-support-decline">not this time</button>
+                  <button id="btn-support" class="primary">send it</button>
+                </div>
               </div>
             </div>
           </section>
         </section>
 
         <section class="nation" id="panel-east"></section>
+
+        <section class="ignition" id="ignition">
+          <h2>everything is perfectly under control</h2>
+          <!-- On the bench the war has already been fought. Reviewing the matter simply
+               starts its recorded prologue. -->
+          <p class="replay-note hidden" id="replay-note"></p>
+          <p class="ignition-copy">
+            Review the dispute, choose the Council's position, and add any conditions
+            you want placed on the record. The adopted resolution may trigger a crisis.
+          </p>
+          <div class="crisis-action">
+            <button
+              id="btn-ignite"
+              class="primary"
+              aria-haspopup="dialog"
+            >Review the Matter</button>
+          </div>
+        </section>
       </main>
+    </div>
+
+    <div class="intro hidden" id="crisis-dialog">
+      <div
+        class="intro-card crisis-file"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="crisis-title"
+      >
+        <div class="tag">Meridian Council · emergency session</div>
+        <h2 id="crisis-title">Matter before the Council</h2>
+        <p class="lede small">Review the scenario, then set the Council's position.</p>
+
+        <div class="tag sep">matter before the Council</div>
+        <div class="scenario-grid" id="crisis-scenarios">
+          <div class="scenario-card">
+            <button class="scenario-option on" data-scenario="line">
+              <b>The Kestrel Line</b>
+              <span>Borders, patrol rights, and the law of the strait</span>
+            </button>
+            <details>
+              <summary>Quick Read</summary>
+              <p>
+                An arbitration commission drew the maritime boundary sixty-one years ago.
+                Aurelia signed it; Korsav never did. A ruling determines whose patrols and
+                maps the Council treats as lawful.
+              </p>
+            </details>
+          </div>
+          <div class="scenario-card">
+            <button class="scenario-option" data-scenario="reef">
+              <b>Bellow Reef</b>
+              <span>Gas, drilling rights, and disputed assets</span>
+            </button>
+            <details>
+              <summary>Quick Read</summary>
+              <p>
+                A major gas field has been found beneath a reef claimed by both islands.
+                Each has licensed development and deployed naval forces. The decision sets
+                who may extract it—or whether either may proceed alone.
+              </p>
+            </details>
+          </div>
+          <div class="scenario-card">
+            <button class="scenario-option" data-scenario="reckoning">
+              <b>The Old Wounds</b>
+              <span>Deaths, investigations, and evidence returned to public view</span>
+            </button>
+            <details>
+              <summary>Quick Read</summary>
+              <p>
+                An unresolved ferry sinking, a murdered envoy, and leaked war plans have
+                reopened decades of grievance. The Council must decide whose account
+                deserves international recognition—or refuse both versions.
+              </p>
+            </details>
+          </div>
+        </div>
+
+        <div class="response-field">
+          <div class="tag">proposed response</div>
+          <div class="position-grid" id="crisis-positions">
+            <button class="position-option" data-position="west" id="position-west"></button>
+            <button class="position-option on" data-position="middle">Seek Middle Ground</button>
+            <button class="position-option" data-position="east" id="position-east"></button>
+          </div>
+        </div>
+        <p class="response-description" id="crisis-response-description"></p>
+
+        <label class="response-field" for="crisis-prompt">
+          <span class="tag">additional Council direction · optional</span>
+          <textarea
+            id="crisis-prompt"
+            rows="3"
+            maxlength="440"
+            placeholder="Add a condition, guarantee, finding, or instruction in your own words…"
+          ></textarea>
+        </label>
+
+        <div class="row file-actions">
+          <button id="btn-crisis-start" class="primary">Adopt the Council Resolution</button>
+          <button id="btn-crisis-close">Return to the Map</button>
+        </div>
+      </div>
     </div>
 
     <!-- One reusable file: an ignition dossier, or the sixty-one years. Filled from the

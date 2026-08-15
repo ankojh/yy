@@ -67,11 +67,12 @@ export interface Article {
 }
 
 export const WEAPONS: Array<{ id: string; label: string; domain: string }> = [
+  { id: "narrative", label: "narrative warfare", domain: "influence" },
   { id: "drone_swarm", label: "drone swarm", domain: "air" },
-  { id: "cruise_missile", label: "cruise missile", domain: "air" },
+  { id: "cruise_missile", label: "missile", domain: "air" },
   { id: "naval_barrage", label: "naval barrage", domain: "naval" },
   { id: "cyber_strike", label: "cyber strike", domain: "cyber" },
-  { id: "nuke", label: "nuclear", domain: "air" },
+  { id: "nuke", label: "nuclear warhead", domain: "air" },
 ];
 
 export const WEAPON_BY_ID = Object.fromEntries(WEAPONS.map((w) => [w.id, w]));
@@ -87,6 +88,22 @@ export interface World {
   talks_cooldown: number;
   talks_held: number;
   outcome: string | null;
+  council_budget: number;
+  council_history: Array<{
+    kind: string;
+    targets: Side[];
+    cost: number;
+    text: string;
+  }>;
+  council_request: {
+    id: string;
+    side: Side;
+    kind: string;
+    label: string;
+    cost: number;
+    text: string;
+    turn: number;
+  } | null;
 }
 
 export interface GameState {
