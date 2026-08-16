@@ -76,7 +76,7 @@ async def _turn(west_action, east_action, seed=0):
     await game.reset()
     await game.ignite(["trawler"])
 
-    async def fake_decide(state, side):
+    async def fake_decide(state, side, session=None):
         return west_action if side == "west" else east_action
 
     original = agents.decide

@@ -567,6 +567,52 @@ INTENT = {
 for _schema in TOOL_SCHEMAS:
     _schema["function"]["parameters"]["properties"]["intent"] = INTENT
 
+
+# The hosted Responses path deliberately exposes one stable function instead of a
+# different set of functions every turn. Prompt caching needs an identical prefix;
+# removing `strike`, narrowing its weapon enum, or swapping to the talks-only tool set
+# changed that prefix on almost every request. The current legal set and loaded weapons
+# still arrive in the turn brief, and the server validates the returned action against
+# the narrow per-turn schemas before anything reaches the engine.
+RESPONSE_DECISION_TOOL: Dict[str, Any] = {
+    "type": "function",
+    "name": "decide_turn",
+    "description": (
+        "Choose exactly one action for this turn. Only choose an action and arguments "
+        "listed as legal in the current turn brief. The server rejects unavailable "
+        "actions, unloaded weapons, nonexistent clauses, and missing required fields."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": TOOL_NAMES,
+                "description": "The legal action to take this turn.",
+            },
+            "weapon": {"type": "string", "enum": list(WEAPONS)},
+            "target": {
+                "type": "string",
+                "enum": ["military", "infrastructure", "civilian"],
+            },
+            "domain": {"type": "string", "enum": ["air", "naval", "cyber"]},
+            "demand": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(ARTICLES)},
+            },
+            "concede": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(ARTICLES)},
+            },
+            "acknowledge": {"type": "string", "enum": ["I ACCEPT DEFEAT"]},
+            "message": MESSAGE,
+            "intent": INTENT,
+        },
+        "required": ["action", "message"],
+        "additionalProperties": False,
+    },
+}
+
 # Shown to the commander every turn so the alternatives are legible as *mechanics*
 # rather than as flavour. Telling a model to "be varied" does nothing; telling it what
 # each button actually buys is what changes the decision.

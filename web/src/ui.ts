@@ -105,7 +105,7 @@ function setupPanel(n: Nation): string {
     ${n.blurb ? `<p class="blurb">${esc(n.blurb)}</p>` : ""}
     ${n.creed ? `<p class="creed">argues from ${esc(n.creed)}</p>` : ""}
     <div class="block"><div class="tag">opening position</div>${stats}</div>
-    <div class="block"><div class="tag">country</div>${country}</div>
+    <div class="block">${country}</div>
     <div class="block"><div class="tag">arsenal</div>${arms}</div>`;
 }
 
@@ -170,7 +170,7 @@ function readoutPanel(n: Nation): string {
     ${commander(n)}
     ${status ? `<div class="chips">${status}</div>` : ""}
     ${meters}
-    <div class="block"><div class="tag">pressure</div>${pressures}</div>
+    <div class="block">${pressures}</div>
     <div class="block"><div class="tag">the dead</div>
       <div class="d toll-line"><span>civilians and service dead</span>
         <span class="n">${count(n.casualties ?? 0)}</span></div>

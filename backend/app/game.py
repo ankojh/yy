@@ -460,6 +460,13 @@ class Game:
             agents.seed(seed)
         self._emit = emit
         self._file: Optional[MatchLog] = None
+        # The hosted Responses API remembers a few turns for each commander. These
+        # sessions belong to this match so neither island nor another websocket can
+        # inherit the other side's private chain.
+        self._agent_sessions = {
+            "west": agents.ResponseSession(),
+            "east": agents.ResponseSession(),
+        }
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ events
@@ -474,6 +481,15 @@ class Game:
 
     async def emit_state(self) -> None:
         await self.emit("state", state=self.state.model_dump())
+
+    async def record_llm_trace(self, payload: Dict[str, Any]) -> None:
+        """Keep safe usage counters always; keep raw model I/O only when opted in."""
+        if not self._file:
+            return
+        if payload.get("direction") == "usage":
+            self._file.write_llm_usage(payload)
+        elif settings.llm_debug:
+            self._file.write_llm_trace(payload)
 
     async def _beat(self, mult: float = 1.0) -> None:
         """Deliberate pause, in multiples of BEAT so setting BEAT=0 truly disables pacing."""
@@ -491,6 +507,8 @@ class Game:
             self._file = None
         self.state = initial_state()
         self.log = []
+        for session in self._agent_sessions.values():
+            session.reset()
         await self.emit("reset", **reset_payload())
         await self.emit_state()
 
@@ -545,6 +563,11 @@ class Game:
                     "west_model": settings.panel["west"],
                     "east_model": settings.panel["east"],
                     "arbiter_model": settings.panel["arbiter"],
+                    "llm_api": (
+                        "responses" if settings.llm_provider == "openai"
+                        else "chat_completions"
+                    ),
+                    "response_chain_turns": settings.response_chain_turns,
                     "mock": settings.use_mock,
                     "max_turns": settings.max_turns,
                     "seed": self.seed,
@@ -588,7 +611,7 @@ class Game:
         await self.emit_state()
 
     async def inject(self, text: str) -> None:
-        """Gently interfere with a live war. Both commanders see the nudge next turn."""
+        """Add context to a live war. Both commanders see the nudge next turn."""
         if self.state.world.phase != "conflict":
             return
         nudge = text.strip()[:500] or self._rng.choice(COUNCIL_NUDGES)
@@ -771,15 +794,22 @@ class Game:
             await self.emit("turn_started", turn=world.turn)
             await self._beat(0.45)
 
-            # Both commanders decide simultaneously — neither sees the other's move.
-            west, east = await asyncio.gather(
-                agents.decide(self.state, "west"), agents.decide(self.state, "east")
-            )
-            actions: List[Action] = [west, east]
+            # Bind this match's private diagnostics file while model calls run. Raw
+            # prompts never enter the replay stream or cross the websocket.
+            trace_token = agents.bind_trace(self.record_llm_trace if self._file else None)
+            try:
+                # Both commanders decide simultaneously — neither sees the other's move.
+                west, east = await asyncio.gather(
+                    agents.decide(self.state, "west", self._agent_sessions["west"]),
+                    agents.decide(self.state, "east", self._agent_sessions["east"]),
+                )
+                actions: List[Action] = [west, east]
 
-            # Both were judged together — they decided simultaneously — but they are
-            # revealed one at a time: speak, let it land, resolve, then the other answers.
-            raw = await agents.arbitrate(self.state, actions)
+                # Both were judged together — they decided simultaneously — but they are
+                # revealed one at a time: speak, let it land, resolve, then the other answers.
+                raw = await agents.arbitrate(self.state, actions)
+            finally:
+                agents.unbind_trace(trace_token)
             rulings = agents.parse_rulings(raw, actions, self.state)
             reaction = agents.parse_world_reaction(raw)
 

@@ -1,10 +1,12 @@
-"""Per-match transcripts on disk.
+"""Per-match transcripts and model accounting on disk.
 
-Two files per match, written as it happens and flushed every line so you can `tail -f`
-a war in progress:
+Three ordinary files per match, plus an optional raw LLM trace when LLM_DEBUG is enabled.
+Every line is flushed as it happens so you can `tail -f` a war in progress:
 
   logs/match-<stamp>.jsonl   every event, for replay or analysis
   logs/match-<stamp>.md      the readable chat transcript
+  logs/match-<stamp>-usage.jsonl  token and prompt-cache counters (no prompts)
+  logs/match-<stamp>-llm.jsonl  model requests and responses (development only)
 """
 
 import json
@@ -35,15 +37,26 @@ class MatchLog:
             stamp = f"{base}-{suffix}"
         self.jsonl_path = log_dir / f"match-{stamp}.jsonl"
         self.md_path = log_dir / f"match-{stamp}.md"
+        self.usage_path = log_dir / f"match-{stamp}-usage.jsonl"
+        self.llm_path = log_dir / f"match-{stamp}-llm.jsonl"
         self._jsonl: Optional[TextIO] = self.jsonl_path.open("w", encoding="utf-8")
         self._md: Optional[TextIO] = self.md_path.open("w", encoding="utf-8")
+        self._usage: Optional[TextIO] = self.usage_path.open("w", encoding="utf-8")
+        # Open lazily: matches run with LLM_DEBUG=0 should not leave an empty raw trace.
+        self._llm: Optional[TextIO] = None
         self._say(f"# yudhyantra — {datetime.now():%Y-%m-%d %H:%M:%S}\n")
 
         # Which rules and which models produced this transcript. Never the API key.
         meta = dict(meta or {})
+        self._meta = meta
         if self._jsonl:
             self._jsonl.write(json.dumps({"type": "meta", "turn": 0, "payload": meta}) + "\n")
             self._jsonl.flush()
+        if self._usage:
+            self._usage.write(
+                json.dumps({"type": "meta", "turn": 0, "payload": meta}) + "\n"
+            )
+            self._usage.flush()
         if meta:
             self._say(
                 "`" + "` · `".join(f"{k}={v}" for k, v in meta.items() if v is not None) + "`\n"
@@ -118,9 +131,43 @@ class MatchLog:
         elif ev.type == "game_over":
             self._say(f"\n## Result\n\n**{p.get('outcome', '')}**\n")
 
+    def write_llm_trace(self, payload: Dict[str, Any]) -> None:
+        """Append raw model I/O to its own non-replayable diagnostics file."""
+        if self._llm is None:
+            self._llm = self.llm_path.open("w", encoding="utf-8")
+            self._llm.write(
+                json.dumps({"type": "meta", "payload": self._meta}, ensure_ascii=False) + "\n"
+            )
+        record = {
+            "type": "llm_trace",
+            "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+            **payload,
+        }
+        self._llm.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._llm.flush()
+
+    def write_llm_usage(self, payload: Dict[str, Any]) -> None:
+        """Record cost/cache counters without retaining prompts or model output."""
+        if not self._usage:
+            return
+        allowed = {
+            "agent", "direction", "model", "turn", "api", "stateless",
+            "chain_position", "chain_reset", "input_tokens", "cached_input_tokens",
+            "output_tokens", "total_tokens",
+        }
+        record = {
+            "type": "llm_usage",
+            "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+            **{key: value for key, value in payload.items() if key in allowed},
+        }
+        self._usage.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._usage.flush()
+
     def close(self) -> None:
-        for handle in (self._jsonl, self._md):
+        for handle in (self._jsonl, self._md, self._usage, self._llm):
             if handle:
                 handle.close()
         self._jsonl = None
         self._md = None
+        self._usage = None
+        self._llm = None

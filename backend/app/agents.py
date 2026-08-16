@@ -6,7 +6,9 @@ runs offline. That keeps the UI workable before you spend a cent.
 
 import json
 import random
-from typing import Any, Dict, List, Optional
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from .config import settings
 from .engine import (
@@ -18,6 +20,7 @@ from .lore import ARTICLES, CORE_ARTICLES, SETTLEMENT_MINIMUM, article_brief, do
 from .state import Action, GameState, Ruling
 from .tools import (
     STRIKE_STREAK_LIMIT,
+    RESPONSE_DECISION_TOOL,
     TOOL_META,
     TOOL_TRADEOFFS,
     WEAPONS,
@@ -33,6 +36,57 @@ from .tools import (
 # Seeded separately from the global RNG so simulations are reproducible without
 # perturbing anything else that happens to use `random`.
 _rng = random.Random()
+
+# A game binds its own websocket trace sink while a turn is being calculated. ContextVar
+# keeps simultaneous websocket games separate, and is inherited by the two commander
+# tasks created with asyncio.gather.
+TraceSink = Callable[[Dict[str, Any]], Awaitable[None]]
+_trace_sink: ContextVar[Optional[TraceSink]] = ContextVar("llm_trace_sink", default=None)
+
+
+@dataclass
+class ResponseSession:
+    """One commander's short, match-local Responses chain.
+
+    A session is owned by a `Game`, never by this module. That keeps simultaneous
+    websocket matches and the two opposing commanders from sharing private context.
+    """
+
+    previous_response_id: Optional[str] = None
+    previous_call_id: Optional[str] = None
+    turns: int = 0
+
+    def prepare(self, limit: int) -> Optional[str]:
+        if self.turns >= limit:
+            self.reset()
+        return self.previous_response_id
+
+    def remember(self, response_id: str, call_id: str) -> None:
+        self.previous_response_id = response_id
+        self.previous_call_id = call_id
+        self.turns += 1
+
+    def reset(self) -> None:
+        self.previous_response_id = None
+        self.previous_call_id = None
+        self.turns = 0
+
+
+def bind_trace(sink: Optional[TraceSink]) -> Token:
+    return _trace_sink.set(sink)
+
+
+def unbind_trace(token: Token) -> None:
+    _trace_sink.reset(token)
+
+
+async def _trace(**payload: Any) -> None:
+    sink = _trace_sink.get()
+    if sink is not None:
+        try:
+            await sink(payload)
+        except Exception:  # noqa: BLE001 - diagnostics must never change a model decision
+            pass
 
 
 def seed(value: Optional[int]) -> None:
@@ -109,7 +163,10 @@ VOICE = (
 def _client():
     from openai import AsyncOpenAI
 
-    return AsyncOpenAI(api_key=settings.openai_api_key)
+    options: Dict[str, Any] = {"api_key": settings.llm_api_key}
+    if settings.llm_base_url:
+        options["base_url"] = settings.llm_base_url
+    return AsyncOpenAI(**options)
 
 
 def _trim(text: str, words: int = 22) -> str:
@@ -410,6 +467,58 @@ def _brief(state: GameState, side: str, legal: List[str]) -> str:
             "your_danger": _warnings(me, state),
             "tools_you_may_use_this_turn": legal,
             "what_each_option_costs_and_buys": _option_block(state, side, legal),
+        },
+        indent=2,
+    )
+
+
+def _continuation_brief(state: GameState, side: str, legal: List[str]) -> str:
+    """Canonical current state plus only the public record added since the last turn.
+
+    The opening request in a short Responses chain receives `_brief`; subsequent requests
+    already have that explanation in context. Repeating it would pay for old prose twice
+    while making the current facts harder to find.
+    """
+    me = state.nation(side)
+    foe = state.foe(side)
+    world = state.world
+    return json.dumps(
+        {
+            "turn": world.turn,
+            "turns_remaining": settings.max_turns - world.turn,
+            "authoritative_current_state": {
+                "military": me.military,
+                "infrastructure": me.integrity,
+                "treasury_usd_billions": me.budget,
+                "international_pressure": me.intl_pressure,
+                "public_unrest": me.unrest,
+                "casualties": me.casualties,
+                "defenses": me.defenses,
+                "arsenal_rounds_left": me.arsenal,
+                "active_effects": me.effects.summary(),
+                "strike_fatigue": _fatigue_block(me),
+                "cooldowns": me.cooldowns,
+            },
+            "enemy_intelligence_now": {
+                **foe.coarse(),
+                "nuclear_warheads_remaining": foe.arsenal.get("nuke", 0),
+            },
+            "new_public_record": _war_log(state, side, limit=2),
+            "latest_world_and_council_context": {
+                "tension": world.tension,
+                "council_funds_remaining_usd_billions": world.council_budget,
+                "latest_support": world.council_history[-1:],
+                "latest_grievances": world.grievances[-3:],
+            },
+            "the_dead": _toll_block(state, side),
+            "the_negotiating_table": _talks_block(state, side),
+            "your_danger": _warnings(me, state),
+            "tools_you_may_use_this_turn": legal,
+            "what_each_option_costs_and_buys": _option_block(state, side, legal),
+            "instruction": (
+                "Treat this current state as authoritative when it differs from anything "
+                "remembered earlier in the response chain. Choose one legal action."
+            ),
         },
         indent=2,
     )
@@ -898,7 +1007,92 @@ def _model_controls(model: str, temperature: float) -> Dict[str, Any]:
     return {"temperature": temperature}
 
 
-async def decide(state: GameState, side: str) -> Action:
+def _response_controls(model: str, temperature: float) -> Dict[str, Any]:
+    """Responses spells reasoning controls differently from Chat Completions."""
+    if model.startswith("gpt-5"):
+        return {"reasoning": {"effort": "minimal"}}
+    return {"temperature": temperature}
+
+
+def _read(value: Any, key: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def _usage_payload(response: Any) -> Dict[str, int]:
+    usage = _read(response, "usage")
+    details = _read(usage, "input_tokens_details")
+    return {
+        "input_tokens": int(_read(usage, "input_tokens", 0) or 0),
+        "cached_input_tokens": int(_read(details, "cached_tokens", 0) or 0),
+        "output_tokens": int(_read(usage, "output_tokens", 0) or 0),
+        "total_tokens": int(_read(usage, "total_tokens", 0) or 0),
+    }
+
+
+def _chat_usage_payload(response: Any) -> Dict[str, int]:
+    """Normalize Chat Completions usage into the same log shape as Responses."""
+    usage = _read(response, "usage")
+    details = _read(usage, "prompt_tokens_details")
+    return {
+        "input_tokens": int(_read(usage, "prompt_tokens", 0) or 0),
+        "cached_input_tokens": int(_read(details, "cached_tokens", 0) or 0),
+        "output_tokens": int(_read(usage, "completion_tokens", 0) or 0),
+        "total_tokens": int(_read(usage, "total_tokens", 0) or 0),
+    }
+
+
+def _response_function_call(response: Any, name: str) -> Any:
+    for item in _read(response, "output", []) or []:
+        if _read(item, "type") == "function_call" and _read(item, "name") == name:
+            return item
+    raise ValueError(f"Responses API returned no {name} function call")
+
+
+def _validated_response_action(
+    state: GameState, side: str, legal: List[str], raw: Dict[str, Any], model: str
+) -> Action:
+    """Validate the stable Responses envelope against today's narrow legal schema."""
+    me = state.nation(side)
+    tool = str(raw.get("action") or "")
+    if tool not in legal:
+        raise ValueError(f"model selected unavailable action {tool!r}")
+
+    narrow = schemas_for(
+        legal, me.arsenal, me.military, me.strike_streak,
+        me.effects.sanctioned > 0, me.effects.blockaded > 0, me.budget,
+    )
+    schema = next(s["function"] for s in narrow if s["function"]["name"] == tool)
+    params = schema["parameters"]
+    properties = params.get("properties", {})
+    args = {key: value for key, value in raw.items() if key in properties}
+    missing = [key for key in params.get("required", []) if key not in args]
+    if missing:
+        raise ValueError(f"{tool} is missing required fields: {', '.join(missing)}")
+
+    for key, value in args.items():
+        spec = properties.get(key, {})
+        if "enum" in spec and value not in spec["enum"]:
+            raise ValueError(f"{tool}.{key} is not currently available")
+        item_enum = spec.get("items", {}).get("enum")
+        if item_enum is not None and (
+            not isinstance(value, list) or any(item not in item_enum for item in value)
+        ):
+            raise ValueError(f"{tool}.{key} contains an unknown option")
+
+    if "message" in args:
+        args["message"] = _trim(str(args["message"]))
+    intent = str(args.pop("intent", ""))[:24]
+    return Action(
+        side=side, tool=tool, args=args, intent=intent,
+        source="live", model=model, legal=legal,
+    )
+
+
+async def decide(
+    state: GameState, side: str, session: Optional[ResponseSession] = None
+) -> Action:
     me = state.nation(side)
     legal = legal_tools_for(state, side)
     model = settings.model_for(side)
@@ -906,24 +1100,127 @@ async def decide(state: GameState, side: str) -> Action:
     if settings.use_mock:
         action = _mock_action(state, side, legal)
         action.source, action.legal = "mock", legal
+        await _trace(
+            agent=side, direction="status", model="mock", turn=state.world.turn,
+            content="Mock policy active — no request was sent to an LLM.",
+        )
+        await _trace(
+            agent=side, direction="received", model="mock", turn=state.world.turn,
+            content={"tool_call": {"name": action.tool, "arguments": action.args}},
+        )
         return action
 
+    response_session = session or ResponseSession()
     try:
+        if settings.llm_provider == "openai":
+            previous = response_session.prepare(settings.response_chain_turns)
+            starts_chain = previous is None
+            turn_input = (
+                _brief(state, side, legal)
+                if starts_chain
+                else _continuation_brief(state, side, legal)
+            )
+            response_input: Any = turn_input
+            if previous:
+                if not response_session.previous_call_id:
+                    raise ValueError("Responses chain has no prior function call id")
+                response_input = [
+                    {
+                        "type": "function_call_output",
+                        "call_id": response_session.previous_call_id,
+                        "output": "The declared action was accepted and resolved.",
+                    },
+                    {"role": "user", "content": turn_input},
+                ]
+            cache_key = f"yudhyantra:commander:{side}:v1:{model}"
+            request: Dict[str, Any] = {
+                "model": model,
+                "instructions": system_prompt(side),
+                "input": response_input,
+                "tools": [RESPONSE_DECISION_TOOL],
+                "tool_choice": {"type": "function", "name": "decide_turn"},
+                "prompt_cache_key": cache_key,
+                "store": True,
+                **_response_controls(model, temperature=1.0),
+            }
+            if previous:
+                request["previous_response_id"] = previous
+            await _trace(
+                agent=side, direction="sent", model=model, turn=state.world.turn,
+                api="responses", chain_position=response_session.turns + 1,
+                chain_reset=starts_chain,
+                content={
+                    "instructions": request["instructions"],
+                    "input": response_input,
+                    "tools": request["tools"],
+                    "tool_choice": request["tool_choice"],
+                    "previous_response_id": previous,
+                    "prompt_cache_key": cache_key,
+                },
+            )
+            resp = await _client().responses.create(**request)
+            call = _response_function_call(resp, "decide_turn")
+            raw = json.loads(_read(call, "arguments", "{}") or "{}")
+            action = _validated_response_action(state, side, legal, raw, model)
+            response_id = str(_read(resp, "id", ""))
+            call_id = str(_read(call, "call_id", ""))
+            if not response_id:
+                raise ValueError("Responses API returned no response id")
+            if not call_id:
+                raise ValueError("Responses API returned no function call id")
+            response_session.remember(response_id, call_id)
+            usage = _usage_payload(resp)
+            await _trace(
+                agent=side, direction="usage", model=model, turn=state.world.turn,
+                api="responses", response_id=response_id,
+                chain_position=response_session.turns, chain_reset=starts_chain,
+                **usage,
+            )
+            await _trace(
+                agent=side, direction="received", model=model, turn=state.world.turn,
+                api="responses",
+                content={
+                    "response_id": response_id,
+                    "tool_call": {"name": action.tool, "arguments": action.args},
+                    "usage": usage,
+                },
+            )
+            return action
+
+        # Ollama's OpenAI-compatible server currently implements Chat Completions, not
+        # Responses. Keep the local/free path intact while hosted runs use Responses.
+        messages = [
+            {"role": "system", "content": system_prompt(side)},
+            {"role": "user", "content": _brief(state, side, legal)},
+        ]
+        tools = schemas_for(
+            legal, me.arsenal, me.military, me.strike_streak,
+            me.effects.sanctioned > 0, me.effects.blockaded > 0, me.budget,
+        )
+        await _trace(
+            agent=side, direction="sent", model=model, turn=state.world.turn,
+            api="chat_completions",
+            content={"messages": messages, "tools": tools, "tool_choice": "required"},
+        )
         resp = await _client().chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt(side)},
-                {"role": "user", "content": _brief(state, side, legal)},
-            ],
-            tools=schemas_for(
-                legal, me.arsenal, me.military, me.strike_streak,
-                me.effects.sanctioned > 0, me.effects.blockaded > 0, me.budget,
-            ),
-            tool_choice="required",
+            model=model, messages=messages, tools=tools, tool_choice="required",
             **_model_controls(model, temperature=1.0),
         )
         call = resp.choices[0].message.tool_calls[0]
         args = json.loads(call.function.arguments or "{}")
+        usage = _chat_usage_payload(resp)
+        await _trace(
+            agent=side, direction="usage", model=model, turn=state.world.turn,
+            api="chat_completions", **usage,
+        )
+        await _trace(
+            agent=side, direction="received", model=model, turn=state.world.turn,
+            api="chat_completions",
+            content={
+                "assistant_content": resp.choices[0].message.content,
+                "tool_call": {"name": call.function.name, "arguments": args},
+            },
+        )
         if "message" in args:
             args["message"] = _trim(str(args["message"]))
         intent = str(args.pop("intent", ""))[:24]
@@ -932,6 +1229,13 @@ async def decide(state: GameState, side: str) -> Action:
             source="live", model=model, legal=legal,
         )
     except Exception as exc:  # noqa: BLE001 - never let a bad turn kill the match
+        if settings.llm_provider == "openai":
+            response_session.reset()
+        await _trace(
+            agent=side, direction="error", model=model, turn=state.world.turn,
+            api="responses" if settings.llm_provider == "openai" else "chat_completions",
+            content={"type": type(exc).__name__, "message": str(exc)},
+        )
         action = _mock_action(state, side, legal)
         action.source, action.legal = "fallback", legal
         action.model = model
@@ -991,6 +1295,47 @@ ARBITER_SYSTEM = (
     '"bulletin": "one sentence of wire-service news copy"}'
 )
 
+ARBITER_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "name": "turn_rulings",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "rulings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "side": {"type": "string", "enum": ["west", "east"]},
+                        "coherent": {"type": "boolean"},
+                        "exploits_weakness": {"type": "boolean"},
+                        "adapts": {"type": "boolean"},
+                        "overstated": {"type": "boolean"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": [
+                        "side", "coherent", "exploits_weakness", "adapts",
+                        "overstated", "reason",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+            "tension_delta": {"type": "integer", "minimum": -8, "maximum": 10},
+            "condemned": {
+                "type": ["string", "null"],
+                "enum": ["west", "east", None],
+            },
+            "condemnation": {"type": "integer", "minimum": 0, "maximum": 10},
+            "bulletin": {"type": "string"},
+        },
+        "required": [
+            "rulings", "tension_delta", "condemned", "condemnation", "bulletin",
+        ],
+        "additionalProperties": False,
+    },
+}
+
 
 def _mock_rulings(actions: List[Action]) -> Dict[str, Any]:
     return {
@@ -1011,7 +1356,16 @@ def _mock_rulings(actions: List[Action]) -> Dict[str, Any]:
 async def arbitrate(state: GameState, actions: List[Action]) -> Dict[str, Any]:
     """Returns rulings plus a world reaction. All numbers are clamped by the caller."""
     if settings.use_mock:
-        return _mock_rulings(actions)
+        result = _mock_rulings(actions)
+        await _trace(
+            agent="arbiter", direction="status", model="mock", turn=state.world.turn,
+            content="Mock policy active — no request was sent to an LLM.",
+        )
+        await _trace(
+            agent="arbiter", direction="received", model="mock", turn=state.world.turn,
+            content=result,
+        )
+        return result
 
     payload = {
         "turn": state.world.turn,
@@ -1034,17 +1388,76 @@ async def arbitrate(state: GameState, actions: List[Action]) -> Dict[str, Any]:
         ],
     }
     try:
+        if settings.llm_provider == "openai":
+            cache_key = f"yudhyantra:arbiter:v1:{settings.arbiter_model}"
+            request = {
+                "model": settings.arbiter_model,
+                "instructions": ARBITER_SYSTEM,
+                "input": json.dumps(payload, indent=2),
+                "text": {"format": ARBITER_RESPONSE_FORMAT},
+                "prompt_cache_key": cache_key,
+                # Each ruling must depend only on canonical state and this turn's
+                # simultaneous declarations. The arbiter never joins a conversation.
+                "store": False,
+                **_response_controls(settings.arbiter_model, temperature=0.4),
+            }
+            await _trace(
+                agent="arbiter", direction="sent", model=settings.arbiter_model,
+                turn=state.world.turn, api="responses", stateless=True,
+                content={
+                    "instructions": ARBITER_SYSTEM,
+                    "input": request["input"],
+                    "text": request["text"],
+                    "prompt_cache_key": cache_key,
+                    "store": False,
+                },
+            )
+            resp = await _client().responses.create(**request)
+            result = json.loads(str(_read(resp, "output_text", "{}") or "{}"))
+            usage = _usage_payload(resp)
+            await _trace(
+                agent="arbiter", direction="usage", model=settings.arbiter_model,
+                turn=state.world.turn, api="responses", stateless=True, **usage,
+            )
+            await _trace(
+                agent="arbiter", direction="received", model=settings.arbiter_model,
+                turn=state.world.turn, api="responses", content=result,
+            )
+            return result
+
+        messages = [
+            {"role": "system", "content": ARBITER_SYSTEM},
+            {"role": "user", "content": json.dumps(payload, indent=2)},
+        ]
+        await _trace(
+            agent="arbiter", direction="sent", model=settings.arbiter_model,
+            turn=state.world.turn, api="chat_completions", stateless=True,
+            content={"messages": messages, "response_format": {"type": "json_object"}},
+        )
         resp = await _client().chat.completions.create(
             model=settings.arbiter_model,
-            messages=[
-                {"role": "system", "content": ARBITER_SYSTEM},
-                {"role": "user", "content": json.dumps(payload, indent=2)},
-            ],
+            messages=messages,
             response_format={"type": "json_object"},
             **_model_controls(settings.arbiter_model, temperature=0.4),
         )
-        return json.loads(resp.choices[0].message.content or "{}")
-    except Exception:  # noqa: BLE001
+        result = json.loads(resp.choices[0].message.content or "{}")
+        await _trace(
+            agent="arbiter", direction="usage", model=settings.arbiter_model,
+            turn=state.world.turn, api="chat_completions", stateless=True,
+            **_chat_usage_payload(resp),
+        )
+        await _trace(
+            agent="arbiter", direction="received", model=settings.arbiter_model,
+            turn=state.world.turn, api="chat_completions", content=result,
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001
+        await _trace(
+            agent="arbiter", direction="error", model=settings.arbiter_model,
+            turn=state.world.turn,
+            api="responses" if settings.llm_provider == "openai" else "chat_completions",
+            content={"type": type(exc).__name__, "message": str(exc)},
+        )
         return _mock_rulings(actions)
 
 

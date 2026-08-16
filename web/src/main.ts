@@ -24,6 +24,7 @@ let scrubbing = false;
 let quarrel: { partition: any[]; accounts: any } = { partition: [], accounts: {} };
 let crisisScenario = "line";
 let crisisPosition = "middle";
+let warHeld = false;
 
 const CRISIS_LABELS: Record<string, string> = {
   line: "the Kestrel Line dispute",
@@ -37,8 +38,6 @@ function renderSupportRequest() {
   const request = state?.world.council_request;
   const host = $("support-controls");
   host.classList.toggle("hidden", !request || Boolean(replay));
-  $<HTMLButtonElement>("btn-step").disabled = Boolean(request);
-  $<HTMLButtonElement>("btn-run").disabled = Boolean(request);
   if (!request) return;
   $("support-kicker").textContent = `${state?.[request.side].name ?? request.side} is asking`;
   $("support-description").textContent = request.text;
@@ -49,6 +48,11 @@ function renderSupportRequest() {
 
 function send(command: string, extra: Record<string, unknown> = {}) {
   socket?.readyState === WebSocket.OPEN && socket.send(JSON.stringify({ command, ...extra }));
+}
+
+function setWarHeld(held: boolean) {
+  warHeld = held;
+  $("btn-hold").textContent = held ? "resume war" : "hold war";
 }
 
 function renderCrisisDescription() {
@@ -132,6 +136,7 @@ function connect() {
       quarrel = { partition: ev.payload.partition ?? [], accounts: ev.payload.accounts ?? {} };
       crisisScenario = "line";
       crisisPosition = "middle";
+      setWarHeld(false);
       $<HTMLTextAreaElement>("crisis-prompt").value = "";
       renderCrisisOptions();
       renderSupportRequest();
@@ -283,21 +288,37 @@ $("btn-crisis-start").onclick = () => {
     ignitions: [],
     custom: direction ? `${decision} Additional direction: ${direction}` : decision,
   });
+  // WebSocket messages are ordered: finish ignition, then let the dialogue unfold.
+  setWarHeld(false);
+  send("run");
   closeCrisisDialog();
 };
-$("btn-step").onclick = () => send("step");
-$("btn-run").onclick = () => send("run");
-$("btn-pause").onclick = () => send("pause");
-$("btn-inject").onclick = () => send("inject");
-$("btn-reset").onclick = () => send("reset");
-$("btn-support").onclick = () => send("support", {
-  request_id: state?.world.council_request?.id,
-  approved: true,
-});
-$("btn-support-decline").onclick = () => send("support", {
-  request_id: state?.world.council_request?.id,
-  approved: false,
-});
+$("btn-inject").onclick = () => {
+  const detail = window.prompt(
+    "Add a new fact, constraint, or Council direction for both commanders:"
+  )?.trim();
+  if (detail) send("inject", { text: detail });
+};
+$("btn-hold").onclick = () => {
+  setWarHeld(!warHeld);
+  send(warHeld ? "pause" : "run");
+};
+$("btn-support").onclick = () => {
+  send("support", {
+    request_id: state?.world.council_request?.id,
+    approved: true,
+  });
+  setWarHeld(false);
+  send("run");
+};
+$("btn-support-decline").onclick = () => {
+  send("support", {
+    request_id: state?.world.council_request?.id,
+    approved: false,
+  });
+  setWarHeld(false);
+  send("run");
+};
 
 /**
  * The bench.

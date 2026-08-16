@@ -22,6 +22,14 @@ The split that keeps it honest: `engine.py` owns every number. The arbiter only 
 a `-2..+2` modifier and an `effective` flag, both clamped server-side. A hallucinating model
 costs you flavor, never simulation integrity.
 
+Hosted model traffic uses the Responses API in three isolated lanes. Aurelia and Korsav
+each get their own short, match-local chain (four decisions by default), then restart from
+the canonical state. The arbiter is stateless: every ruling receives the true current state
+and both simultaneous declarations, with no commander conversation and no previous response
+ID. Local Ollama keeps its OpenAI-compatible Chat Completions path. The stable instructions
+and decision schema sit at the front of every hosted request so automatic prompt caching can
+reuse that prefix; only current state and recent public events change.
+
 Each nation sees its own exact stats but only **coarse bands** of the enemy's
 (`strong` / `holding` / `strained` / `critical`). Hidden information is the game. Public
 unrest is visible only as a mood band, while the one number nobody can hide is the body
@@ -34,8 +42,8 @@ to itself. The same priors read the same brief, reach for the same tool, and the
 reaching for it was reasonable — and whatever comes out is a property of the model, not of
 the balance.
 
-So the two commanders get different models, in the same price tier, because the experiment
-has to be about the models rather than about who paid more:
+In hosted production the two commanders get different models in the same price tier,
+because the experiment has to be about the models rather than about who paid more:
 
 | chair | default | $/1M in · out |
 |---|---|---|
@@ -53,6 +61,10 @@ permanently the rich republic, which is a bias of its own.
 A whole twelve-turn match costs well under a cent. Which model is in which chair is shown
 in the UI beside each country's name and stamped into every match log. `NATION_MODEL`
 overrides both commanders for a controlled single-model run.
+
+Local development intentionally trades that experimental separation for a free, private
+loop: `gemma4:26b` fills all three chairs through Ollama. The hosted pairing remains
+separately configurable for production.
 
 ## The quarrel
 
@@ -101,8 +113,10 @@ turns the neediest island submits one priced request. Humanitarian relief calms 
 stabilization funds refill its treasury, defensive systems improve interception, a weapons
 grant replenishes conventional rounds, and diplomatic cover lowers international pressure.
 The match waits for approval or refusal. The player never chooses a recipient, provides a
-nuclear weapon, receives a combat turn, or selects a target. **Gently interfere** adds a
-small Council-made complication when the player wants to stir the situation.
+nuclear weapon, receives a combat turn, or selects a target. The conflict now unfolds
+automatically. **Add context** lets the player give both commanders a new fact, constraint,
+or Council direction in their own words; **hold war** pauses it for reading and resumes it
+from the same control.
 
 ## The two countries are not the same country twice
 
@@ -247,13 +261,15 @@ MOCK=1 ./.venv/bin/uvicorn app.main:app --port 8077
 cd web && npm install && npm run dev    # http://localhost:5173
 ```
 
-`MOCK=1` runs scripted commanders with no API calls — the whole loop works offline, so the
-UI is usable before you spend anything. For real agents:
+`MOCK=1` runs scripted commanders with no model calls. A normal development run uses the
+local Ollama service and `gemma4:26b` for all three chairs, so start Ollama and then run:
 
 ```bash
-export OPENAI_API_KEY=sk-...
 ./.venv/bin/uvicorn app.main:app --port 8077
 ```
+
+An `OPENAI_API_KEY` left in `backend/.env` is ignored during local development. Hosted
+deployments must opt in with `APP_ENV=production` (or `LLM_PROVIDER=openai`).
 
 Balance work runs in a batch:
 
@@ -324,16 +340,22 @@ list above — the price of a bench made of one real war instead of five picked 
 
 | var | default | |
 |---|---|---|
-| `OPENAI_API_KEY` | — | absent ⇒ mock mode |
-| `WEST_MODEL` | `gpt-5-nano` | Aurelia's chair |
-| `EAST_MODEL` | `gpt-4.1-nano` | Korsav's chair |
-| `ARBITER_MODEL` | `gpt-5-nano` | the referee |
+| `APP_ENV` | `development` | `production` selects the hosted provider by default |
+| `LLM_PROVIDER` | `ollama` locally, `openai` in production | model API provider |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434/v1` | local OpenAI-compatible endpoint |
+| `OLLAMA_MODEL` | `gemma4:26b` | all three local chairs |
+| `OPENAI_API_KEY` | — | required by the hosted provider; absent ⇒ mock mode |
+| `WEST_MODEL` | local model / `gpt-5-nano` | Aurelia's chair |
+| `EAST_MODEL` | local model / `gpt-4.1-nano` | Korsav's chair |
+| `ARBITER_MODEL` | local model / `gpt-5-nano` | the referee |
 | `NATION_MODEL` | — | if set, overrides *both* commanders (single-model run) |
 | `SWAP_MODELS` | — | `1` reverses which model commands which island |
 | `MAX_TURNS` | `12` | |
+| `RESPONSE_CHAIN_TURNS` | `4` | hosted decisions retained per island before a fresh canonical brief starts a new chain |
 | `REVEAL` | `10.0` | seconds one declared action owns the stage |
 | `TURN_PAUSE` | `4.0` | seconds between turns |
 | `BEAT` | `0.6` | short punctuation pauses |
+| `LLM_DEBUG` | on in development, off in production | writes raw model I/O to `logs/match-…-llm.jsonl` |
 | `MOCK` | — | `1` forces scripted agents even with a key |
 | `REPLAY` | — | name of a recording in `fixtures/` ⇒ every connection is a replay |
 | `REPLAY_SPEED` | `1` | playback rate; `?replay=` and `?speed=` on the page URL win |
@@ -346,6 +368,10 @@ beat they belong to rather than keeping a second, quietly diverging copy of it.
 
 Port 8077 rather than 8000 because another local project already holds 8000. Override the
 frontend with `VITE_API_PORT`.
+
+Every live match also writes `logs/match-…-usage.jsonl`, containing only per-call input,
+cached-input, output and total token counts plus chain position. It never contains prompts
+or model output, so token and cache efficiency can be measured with `LLM_DEBUG=0`.
 
 ## Layout
 

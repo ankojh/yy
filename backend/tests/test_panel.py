@@ -18,7 +18,8 @@ from app.agents import _model_controls
 def settings_with(monkeypatch, **env):
     """A fresh Settings built from a chosen environment. Config is read once at import,
     so poking os.environ afterwards would do nothing."""
-    for key in ("NATION_MODEL", "WEST_MODEL", "EAST_MODEL", "ARBITER_MODEL",
+    for key in ("APP_ENV", "LLM_PROVIDER", "OLLAMA_BASE_URL", "OLLAMA_MODEL",
+                "NATION_MODEL", "WEST_MODEL", "EAST_MODEL", "ARBITER_MODEL",
                 "SWAP_MODELS", "MOCK", "OPENAI_API_KEY"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
@@ -36,7 +37,7 @@ def _restore():
 def test_the_two_commanders_are_never_the_same_model(monkeypatch):
     """The separation that actually matters. One model reading both briefs reaches for
     the same tool twice and the war stops having two sides."""
-    live = settings_with(monkeypatch, OPENAI_API_KEY="sk-test")
+    live = settings_with(monkeypatch, LLM_PROVIDER="openai", OPENAI_API_KEY="sk-test")
     assert live.model_for("west") != live.model_for("east")
 
 
@@ -47,10 +48,23 @@ def test_every_chair_is_in_the_same_price_tier():
         assert "nano" in model or "mini" in model
 
 
-def test_a_key_free_run_puts_the_scripted_policy_in_every_chair(monkeypatch):
+def test_local_ollama_run_ignores_an_openai_key(monkeypatch):
+    # Explicit because a developer's gitignored .env may deliberately select OpenAI.
+    local = settings_with(
+        monkeypatch, LLM_PROVIDER="ollama", OPENAI_API_KEY="sk-test"
+    )
+    assert local.llm_provider == "ollama"
+    assert not local.use_mock
+    assert local.panel == {
+        "west": "gemma4:26b", "east": "gemma4:26b", "arbiter": "gemma4:26b"
+    }
+    assert local.llm_base_url == "http://127.0.0.1:11434/v1"
+
+
+def test_a_key_free_hosted_run_puts_the_scripted_policy_in_every_chair(monkeypatch):
     # Empty rather than absent: config loads backend/.env, which on a developer machine
     # has a real key in it, and dotenv fills in any name that is missing entirely.
-    offline = settings_with(monkeypatch, OPENAI_API_KEY="")
+    offline = settings_with(monkeypatch, LLM_PROVIDER="openai", OPENAI_API_KEY="")
     assert offline.use_mock
     assert offline.panel == {"west": "mock", "east": "mock", "arbiter": "mock"}
 
@@ -58,15 +72,20 @@ def test_a_key_free_run_puts_the_scripted_policy_in_every_chair(monkeypatch):
 def test_nation_model_still_overrides_both_chairs(monkeypatch):
     """The escape hatch: a controlled run where the only difference between the two
     countries is the country."""
-    same = settings_with(monkeypatch, OPENAI_API_KEY="sk-test", NATION_MODEL="gpt-5-nano")
+    same = settings_with(
+        monkeypatch, LLM_PROVIDER="openai", OPENAI_API_KEY="sk-test",
+        NATION_MODEL="gpt-5-nano",
+    )
     assert same.model_for("west") == same.model_for("east") == "gpt-5-nano"
 
 
 def test_the_pairing_can_be_reversed(monkeypatch):
     """Leaving it fixed makes one model permanently the rich republic, which is a bias
     of its own. A run scored both ways round is the only honest one."""
-    straight = settings_with(monkeypatch, OPENAI_API_KEY="sk-test")
-    swapped = settings_with(monkeypatch, OPENAI_API_KEY="sk-test", SWAP_MODELS="1")
+    straight = settings_with(monkeypatch, LLM_PROVIDER="openai", OPENAI_API_KEY="sk-test")
+    swapped = settings_with(
+        monkeypatch, LLM_PROVIDER="openai", OPENAI_API_KEY="sk-test", SWAP_MODELS="1"
+    )
     assert swapped.model_for("west") == straight.model_for("east")
     assert swapped.model_for("east") == straight.model_for("west")
 
@@ -86,8 +105,10 @@ def test_a_sampling_model_still_gets_its_temperature(model):
 def test_swapping_moves_the_arbiters_family_to_the_other_chair(monkeypatch):
     """The referee shares a family with one commander to keep it cheap. Swapping is what
     makes that acceptable: run it both ways and the shared family cancels out."""
-    straight = settings_with(monkeypatch, OPENAI_API_KEY="sk-test")
-    swapped = settings_with(monkeypatch, OPENAI_API_KEY="sk-test", SWAP_MODELS="1")
+    straight = settings_with(monkeypatch, LLM_PROVIDER="openai", OPENAI_API_KEY="sk-test")
+    swapped = settings_with(
+        monkeypatch, LLM_PROVIDER="openai", OPENAI_API_KEY="sk-test", SWAP_MODELS="1"
+    )
     shared = straight.panel["arbiter"]
     sides = {s for s in ("west", "east") if straight.model_for(s) == shared}
     assert sides and {s for s in ("west", "east") if swapped.model_for(s) == shared} != sides
