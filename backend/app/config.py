@@ -8,7 +8,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # Bump whenever mechanics or costs change. Stamped into every match log so a
 # transcript can be read against the rules that actually produced it.
-BALANCE_VERSION = "2026.07.26-b4-talks"
+BALANCE_VERSION = "2026.08.23-b5-intelligence"
 
 # --------------------------------------------------------------------------- the panel
 #
@@ -36,17 +36,10 @@ DEFAULT_PANEL = {
     "arbiter": "gpt-5-nano",
 }
 
-LOCAL_MODEL = "gemma4:26b"
-OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
-
-
 class Settings:
     """Runtime config. Everything is env-driven so there is nothing to edit to switch models."""
 
     def __init__(self) -> None:
-        # Development is local-first: an OpenAI key left in backend/.env must not turn a
-        # laptop run into a paid one. Production opts into the hosted provider explicitly
-        # through APP_ENV=production (or LLM_PROVIDER=openai).
         self.app_env = os.getenv("APP_ENV", "development").strip().lower()
         # Raw prompts and model replies are useful on the local test bench, but they can
         # contain the complete hidden game state. Never write them in production unless
@@ -54,26 +47,15 @@ class Settings:
         debug_default = self.app_env != "production"
         debug_value = os.getenv("LLM_DEBUG", "1" if debug_default else "0").lower()
         self.llm_debug = debug_value in ("1", "true", "yes")
-        default_provider = "openai" if self.app_env == "production" else "ollama"
-        self.llm_provider = os.getenv("LLM_PROVIDER", default_provider).strip().lower()
-        if self.llm_provider not in ("ollama", "openai"):
-            raise ValueError("LLM_PROVIDER must be 'ollama' or 'openai'")
-
+        # The model runtime is intentionally OpenAI-only for now: there is no provider
+        # switch or alternate endpoint to reactivate accidentally.
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
-        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", OLLAMA_BASE_URL).rstrip("/")
-        self.ollama_model = os.getenv("OLLAMA_MODEL", LOCAL_MODEL)
         # NATION_MODEL, if set, overrides both chairs — the escape hatch for anyone who
         # wants the old symmetric setup back, or a controlled single-model run.
         both = os.getenv("NATION_MODEL", "")
-        if self.llm_provider == "ollama":
-            local = both or self.ollama_model
-            self.west_model = os.getenv("WEST_MODEL", local)
-            self.east_model = os.getenv("EAST_MODEL", local)
-            self.arbiter_model = os.getenv("ARBITER_MODEL", local)
-        else:
-            self.west_model = os.getenv("WEST_MODEL", both or DEFAULT_PANEL["west"])
-            self.east_model = os.getenv("EAST_MODEL", both or DEFAULT_PANEL["east"])
-            self.arbiter_model = os.getenv("ARBITER_MODEL", DEFAULT_PANEL["arbiter"])
+        self.west_model = os.getenv("WEST_MODEL", both or DEFAULT_PANEL["west"])
+        self.east_model = os.getenv("EAST_MODEL", both or DEFAULT_PANEL["east"])
+        self.arbiter_model = os.getenv("ARBITER_MODEL", DEFAULT_PANEL["arbiter"])
         # Which model sits in which chair is itself a bias: leave it fixed and one model
         # is permanently the rich republic. Flip it and the pairing reverses, so a run of
         # matches can be scored both ways round.
@@ -123,19 +105,8 @@ class Settings:
 
     @property
     def use_mock(self) -> bool:
-        """Hosted runs need a key; local Ollama runs do not."""
-        return self._force_mock or (
-            self.llm_provider == "openai" and not self.openai_api_key
-        )
-
-    @property
-    def llm_api_key(self) -> str:
-        """AsyncOpenAI requires a value even though Ollama ignores local API keys."""
-        return self.openai_api_key if self.llm_provider == "openai" else "ollama"
-
-    @property
-    def llm_base_url(self) -> str | None:
-        return self.ollama_base_url if self.llm_provider == "ollama" else None
+        """Without an OpenAI key, fall back to the scripted policy instead of calling."""
+        return self._force_mock or not self.openai_api_key
 
 
 settings = Settings()

@@ -5,6 +5,7 @@ import { WEAPONS, WEAPON_BY_ID } from "./types";
 const METERS: Array<[keyof Nation, string]> = [
   ["integrity", "infrastructure"],
   ["military", "military"],
+  ["intelligence", "intelligence"],
 ];
 
 /**
@@ -21,6 +22,40 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 
 const esc = (s: unknown) =>
   String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
+
+/** Short, mechanical explanations shared by setup controls and live readouts. */
+const PARAM_HELP: Record<string, string> = {
+  integrity: "Infrastructure and territory still functioning. If it reaches 0, the island loses.",
+  military: "Operational capacity used by attacks and other military actions. It recovers gradually between turns.",
+  intelligence: "Controls enemy visibility: coarse below 40, rounded estimates at 40–69, and exact operational state at 70+.",
+  budget: "Treasury in billions of dollars. Actions and resource allocations spend it; pressure and blockades can drain it.",
+  intl_pressure: "International isolation. It drains treasury and makes sanctioned attacks more expensive.",
+  unrest: "Domestic opposition to the war. If it reaches 100, the government falls.",
+  casualties: "Civilians and service members killed on this island. The toll influences unrest, appeals, and propaganda.",
+  defenses: "Permanent interception capability. Higher values stop more incoming rounds in that domain.",
+  defense_air: "Air defence intercepts drones and cruise missiles. Nuclear weapons ignore it.",
+  defense_naval: "Naval defence intercepts incoming naval barrages.",
+  defense_cyber: "Cyber defence reduces the effect of hostile cyber operations.",
+  arsenal: "Rounds and influence operations remaining. Conventional stocks can be replenished with treasury; nuclear weapons cannot.",
+  narrative: "Finite influence operations used by propaganda. False claims can backfire.",
+  drone_swarm: "Cheap air-domain attack with a large salvo and relatively low diplomatic cost.",
+  cruise_missile: "Heavy air-domain precision strike. Powerful, expensive, and politically costly.",
+  naval_barrage: "Heavy naval-domain attack. Blockades make it harder and more expensive to launch.",
+  cyber_strike: "Cheap cyber-domain attack that bypasses physical air and naval defences.",
+  nuke: "A single catastrophic escalation. It cannot be intercepted or replenished.",
+  council_budget: "Finite Meridian Council funds available for aid requested by either island.",
+};
+
+const info = (key: string) => {
+  const copy = PARAM_HELP[key];
+  if (!copy) return "";
+  return '<span class="param-info" tabindex="0" role="note" aria-label="' + esc(copy)
+    + '">i<span class="param-tip">' + esc(copy)
+    + '</span></span>';
+};
+
+const paramLabel = (label: string, key: string) =>
+  '<span class="param-label">' + esc(label) + info(key) + '</span>';
 
 /** Bodies get separators. "1240 dead" and "1,240 dead" are not the same sentence. */
 const count = (n: number) => n.toLocaleString("en-US");
@@ -72,6 +107,7 @@ function detailOf(tool: string, args: Record<string, any> = {}): string {
     args.weapon ? WEAPON_BY_ID[args.weapon]?.label ?? args.weapon : "",
     args.target ?? "",
     args.domain ?? "",
+    args.resource ? String(args.resource).replace(/_/g, " ") : "",
   ].filter(Boolean);
   return bits.length ? bits.join(" → ") : tool.replace(/_/g, " ");
 }
@@ -79,7 +115,7 @@ function detailOf(tool: string, args: Record<string, any> = {}): string {
 const slider = (
   side: Side, label: string, attr: string, key: string, value: number, max: number
 ) => `<div class="meter edit">
-    <label><span>${label}</span><span class="val">${value}</span></label>
+    <label>${paramLabel(label, key)}<span class="val">${value}</span></label>
     <input type="range" min="0" max="${max}" value="${value}"
            data-side="${side}" data-${attr}="${key}" />
   </div>`;
@@ -106,14 +142,14 @@ function setupPanel(n: Nation): string {
     ${n.creed ? `<p class="creed">argues from ${esc(n.creed)}</p>` : ""}
     <div class="block"><div class="tag">opening position</div>${stats}</div>
     <div class="block">${country}</div>
-    <div class="block"><div class="tag">arsenal</div>${arms}</div>`;
+    <div class="block"><div class="tag">arsenal${info("arsenal")}</div>${arms}</div>`;
 }
 
 function readoutPanel(n: Nation): string {
   const meters = METERS.map(([key, label]) => {
     const v = n[key] as number;
     return `<div class="meter">
-      <label><span>${label}</span><span>${v}</span></label>
+      <label>${paramLabel(label, key as string)}<span>${v}</span></label>
       <div class="track"><div class="fill ${v < 30 ? "low" : ""}" style="width:${v}%"></div></div>
     </div>`;
   }).join("");
@@ -123,12 +159,12 @@ function readoutPanel(n: Nation): string {
     const v = n[key] as number;
     const hot = cls !== "spin" && v >= 70 ? " hot" : "";
     return `<div class="meter">
-      <label><span>${label}</span><span>${v}</span></label>
+      <label>${paramLabel(label, key as string)}<span>${v}</span></label>
       <div class="track"><div class="fill ${cls}${hot}" style="width:${v}%"></div></div>
     </div>`;
   }).join("");
 
-  const economy = `<div class="d"><span>treasury</span><span class="pct">${usd(n.budget)}</span></div>`;
+  const economy = `<div class="d">${paramLabel("treasury", "budget")}<span class="pct">${usd(n.budget)}</span></div>`;
 
   // Defences are shown as what they actually do — the share of an incoming salvo that
   // gets shot down — rather than as a bare number nobody can price. The percentage is
@@ -139,7 +175,7 @@ function readoutPanel(n: Nation): string {
       const stops = Math.round(Math.min(0.72, v / 105) * 100);
       const cover = turns > 0 ? `<span class="shield">◈ hardened ${turns}t</span>` : "";
       return `<div class="d ${turns > 0 ? "hard" : ""}">
-        <span>${d}</span>${cover}<span class="pct">stops ${stops}%</span></div>`;
+        ${paramLabel(d, `defense_${d}`)}${cover}<span class="pct">stops ${stops}%</span></div>`;
     })
     .join("");
 
@@ -163,7 +199,7 @@ function readoutPanel(n: Nation): string {
     const left = n.arsenal?.[w.id] ?? 0;
     const cls = ["w", left === 0 ? "spent" : "", w.id === "nuke" ? "nuke" : ""].join(" ");
     const pips = w.id === "nuke" ? "☢".repeat(left) : "▮".repeat(Math.min(left, 10));
-    return `<div class="${cls}"><span>${w.label}</span><span class="pips">${pips}</span><span class="n">${left}</span></div>`;
+    return `<div class="${cls}">${paramLabel(w.label, w.id)}<span class="pips">${pips}</span><span class="n">${left}</span></div>`;
   }).join("");
 
   return `${flag(n)}
@@ -172,12 +208,12 @@ function readoutPanel(n: Nation): string {
     ${meters}
     <div class="block">${pressures}</div>
     <div class="block"><div class="tag">the dead</div>
-      <div class="d toll-line"><span>civilians and service dead</span>
+      <div class="d toll-line">${paramLabel("civilians and service dead", "casualties")}
         <span class="n">${count(n.casualties ?? 0)}</span></div>
     </div>
     <div class="block"><div class="tag">war funds</div>${economy}</div>
-    <div class="block"><div class="tag">air, sea and network defence</div>${defenses}</div>
-    <div class="block"><div class="tag">arsenal</div>${arsenal}</div>`;
+    <div class="block"><div class="tag">air, sea and network defence${info("defenses")}</div>${defenses}</div>
+    <div class="block"><div class="tag">arsenal${info("arsenal")}</div>${arsenal}</div>`;
 }
 
 /**
@@ -206,13 +242,13 @@ export function renderState(state: GameState) {
     $("panel-east").innerHTML = build(state.east);
     setupShown = briefing;
   }
-  $("council-funds").innerHTML = `<span class="lbl">council funds</span>
+  $("council-funds").innerHTML = `<span class="lbl">council funds${info("council_budget")}</span>
     <b>${usd(state.world.council_budget ?? 0)}</b>`;
   // The one world-level number that is not already drawn twice in the panels. Isolation
   // used to sit here as well and said nothing the two pressure bars did not.
   const dead = (state.west.casualties ?? 0) + (state.east.casualties ?? 0);
   $("w-toll").innerHTML = dead
-    ? `<span class="lbl">dead</span> <b>${count(dead)}</b>
+    ? `<span class="lbl">dead${info("casualties")}</span> <b>${count(dead)}</b>
        <span class="split">${esc(state.west.name)} ${count(state.west.casualties)} ·
        ${esc(state.east.name)} ${count(state.east.casualties)}</span>`
     : "";

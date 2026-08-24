@@ -47,7 +47,6 @@ class FakeClient:
 
 def hosted(monkeypatch, fake, chain_turns=2):
     monkeypatch.setattr(settings, "_force_mock", False)
-    monkeypatch.setattr(settings, "llm_provider", "openai")
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
     monkeypatch.setattr(settings, "west_model", "gpt-5-nano")
     monkeypatch.setattr(settings, "east_model", "gpt-4.1-nano")
@@ -106,6 +105,40 @@ def test_commander_sessions_never_share_response_ids(monkeypatch):
     asyncio.run(go())
     assert all("previous_response_id" not in req for req in fake.responses.requests)
     assert fake.responses.requests[0]["prompt_cache_key"] != fake.responses.requests[1]["prompt_cache_key"]
+
+
+def test_dev_trace_contains_the_complete_openai_request_and_response(monkeypatch):
+    fake = FakeClient([
+        response("wire-1", {"action": "hold", "message": "We hold."}),
+    ])
+    hosted(monkeypatch, fake)
+    state = initial_state()
+    state.world.phase = "conflict"
+    traces = []
+
+    async def capture(payload):
+        traces.append(payload)
+
+    async def go():
+        token = agents.bind_trace(capture)
+        try:
+            await agents.decide(state, "west", agents.ResponseSession())
+        finally:
+            agents.unbind_trace(token)
+
+    asyncio.run(go())
+
+    sent = next(trace for trace in traces if trace["direction"] == "sent")
+    received = next(trace for trace in traces if trace["direction"] == "received")
+    assert sent["method"] == "POST"
+    assert sent["endpoint"] == "/v1/responses"
+    assert sent["content"] == fake.responses.requests[0]
+    assert sent["content"]["model"] == "gpt-5-nano"
+    assert sent["content"]["store"] is True
+    assert sent["content"]["reasoning"] == {"effort": "minimal"}
+    assert received["content"]["id"] == "wire-1"
+    assert received["content"]["output"][0]["type"] == "function_call"
+    assert received["content"]["usage"]["total_tokens"] == 134
 
 
 def test_arbiter_responses_request_is_stateless(monkeypatch):

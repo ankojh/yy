@@ -21,6 +21,7 @@ PROFILES: Dict[str, Dict[str, Any]] = {
         "integrity": 100,
         "morale": 58,
         "military": 64,
+        "intelligence": 45,
         "standing": 78,
         "gdp": 82,          # economic output index; drives income every turn
         "budget": 70,       # treasury, in $B
@@ -54,6 +55,7 @@ PROFILES: Dict[str, Dict[str, Any]] = {
         "integrity": 100,
         "morale": 68,
         "military": 80,
+        "intelligence": 35,
         "standing": 58,
         "gdp": 56,
         "budget": 96,

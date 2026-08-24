@@ -17,6 +17,8 @@ export interface Nation {
   creed?: string;
   morale: number;
   military: number;
+  /** Intelligence capability. At higher tiers, commanders receive more exact enemy state. */
+  intelligence: number;
   standing: number;
   integrity: number;
   // The war economy.

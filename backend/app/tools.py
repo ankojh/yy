@@ -1,9 +1,9 @@
 """The arsenal. Every move a nation can make is a function call — nothing is free text.
 
-Two scarcities, not one. Munitions are finite and never resupplied, so a nation that
-empties its racks cannot strike again however rich it is. Money is finite per turn, so a
-nation that cannot pay cannot fight however full its racks are. The endgame comes from
-whichever runs out first, and the two profiles run out of different things.
+Two scarcities, not one. Munitions and operational capacity run down, while treasury can
+be allocated to rebuild them or to improve intelligence. Every replenishment costs a
+turn as well as money, so the strategic question is not merely what a nation can afford,
+but what it can afford to stop doing while it rebuilds.
 """
 
 from typing import Any, Dict, List, Optional
@@ -22,10 +22,73 @@ from .lore import ARTICLES
 # treasuries are sized to match: $70B for Aurelia, $96B for Korsav.
 MONEY_UNIT = "billions of USD"
 
+# Intelligence is deliberately legible rather than probabilistic. Below the estimate
+# threshold a commander receives broad bands. At the middle tier it receives rounded
+# estimates. At the exact tier it receives the opponent's canonical operational state.
+INTEL_ESTIMATE_THRESHOLD = 40
+INTEL_EXACT_THRESHOLD = 70
+
+# One allocation is one whole turn and one fixed procurement package. Fixed packages
+# keep the function schema narrow and make every alternative comparable in the prompt.
+# Nuclear weapons are intentionally absent: they cannot be replenished during a match.
+INVESTMENTS: Dict[str, Dict[str, Any]] = {
+    "intelligence": {
+        "label": "intelligence capability", "price": 8, "kind": "stat",
+        "field": "intelligence", "gain": 15,
+    },
+    "infrastructure": {
+        "label": "infrastructure reconstruction", "price": 12, "kind": "stat",
+        "field": "integrity", "gain": 12,
+    },
+    "military": {
+        "label": "military readiness", "price": 10, "kind": "stat",
+        "field": "military", "gain": 18,
+    },
+    "air_defense": {
+        "label": "air defence", "price": 10, "kind": "defense",
+        "domain": "air", "gain": 15,
+    },
+    "naval_defense": {
+        "label": "naval defence", "price": 10, "kind": "defense",
+        "domain": "naval", "gain": 15,
+    },
+    "cyber_defense": {
+        "label": "cyber defence", "price": 10, "kind": "defense",
+        "domain": "cyber", "gain": 15,
+    },
+    "drone_resupply": {
+        "label": "drone swarm resupply", "price": 8, "kind": "arsenal",
+        "weapon": "drone_swarm", "gain": 2,
+    },
+    "cruise_resupply": {
+        "label": "cruise missile resupply", "price": 14, "kind": "arsenal",
+        "weapon": "cruise_missile", "gain": 1,
+    },
+    "naval_resupply": {
+        "label": "naval barrage resupply", "price": 12, "kind": "arsenal",
+        "weapon": "naval_barrage", "gain": 1,
+    },
+    "cyber_resupply": {
+        "label": "cyber payload resupply", "price": 7, "kind": "arsenal",
+        "weapon": "cyber_strike", "gain": 2,
+    },
+    "narrative_resupply": {
+        "label": "narrative operation", "price": 6, "kind": "arsenal",
+        "weapon": "narrative", "gain": 1,
+    },
+}
+
 
 def usd(amount: float) -> str:
     """Write a price the way it appears on screen and in a transcript: $18B."""
     return f"${int(round(amount))}B"
+
+
+def affordable_investments(budget: Optional[int]) -> List[str]:
+    """Procurement packages this treasury can fund right now."""
+    if budget is None:
+        return list(INVESTMENTS)
+    return [name for name, spec in INVESTMENTS.items() if spec["price"] <= budget]
 
 # damage: base, before the target's defenses in that domain blunt it
 # stock:  fallback rounds if a profile does not specify (profiles normally do)
@@ -191,6 +254,9 @@ TOOL_META: Dict[str, Dict[str, int]] = {
     "intl_appeal": {"cost": 0, "price": 4, "cooldown": 3},
     "address_public": {"cost": 0, "price": 5, "cooldown": 2},
     "propaganda": {"cost": 0, "price": 9, "cooldown": 2},
+    # The package itself owns the variable price; the generic entry keeps this action
+    # in the same legality/cooldown machinery as every other move.
+    "allocate_resources": {"cost": 0, "price": 0, "cooldown": 0},
     # The negotiating table. Asking for talks is free — a government that is about to
     # fall cannot be charged for asking — and so is everything said at the table.
     "open_talks": {"cost": 0, "price": 0, "cooldown": 0},
@@ -204,7 +270,7 @@ TOOL_META: Dict[str, Dict[str, int]] = {
 # What you may do with a ceasefire in force. No ordnance crosses the strait while people
 # are at the table — which is exactly why an ailing government wants a table.
 TALKS_TOOLS = ["table_terms", "accept_terms", "walk_out", "address_public",
-               "propaganda", "fortify", "hold", "surrender"]
+               "propaganda", "fortify", "allocate_resources", "hold", "surrender"]
 # ...and the three that mean nothing without one. `open_talks` is not in here: asking for
 # a table is a wartime act, gated on actually losing rather than on a table existing.
 TALKS_ONLY = {"table_terms", "accept_terms", "walk_out"}
@@ -282,8 +348,9 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "name": "strike",
             "description": (
                 "Launch an attack. Consumes one round of the chosen weapon and pays for it "
-                "in dollars — stocks are finite and never resupplied, and a bankrupt "
-                "treasury cannot fire anything. Hitting civilians drives public unrest and "
+                "in dollars — stocks remain spent until a later resource-allocation turn "
+                "replenishes them, and a bankrupt treasury cannot fire anything. Hitting "
+                "civilians drives public unrest and "
                 "pours international pressure onto you. Nuclear use "
                 "is a decision you cannot walk back.\n"
                 "PRESSURE: heavier ordnance on softer targets isolates you faster. A drone "
@@ -414,6 +481,29 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "allocate_resources",
+            "description": (
+                "Spend treasury funds and this entire turn on one concrete investment. "
+                "You can improve intelligence, rebuild infrastructure or military "
+                "readiness, strengthen one defence domain, or replenish conventional "
+                "and narrative stocks. Intelligence below 40 yields coarse enemy bands; "
+                "40–69 yields rounded estimates; 70+ reveals the opponent's exact current "
+                "operational state. Nuclear weapons cannot be replenished. Choose only a "
+                "package listed as affordable in the current brief."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "resource": {"type": "string", "enum": list(INVESTMENTS)},
+                    "message": MESSAGE,
+                },
+                "required": ["resource", "message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "open_talks",
             "description": (
                 "SUE FOR TERMS. Ask the other capital to come to the table. Available only "
@@ -537,9 +627,9 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
             "description": (
                 "Stand down and refit. Restores a large amount of military capacity, "
                 "stiffens every domain a little, clears strike fatigue, lets your cooldowns "
-                "run down faster, and — because you are not paying for a war this turn — "
-                "puts money back in the treasury. The price is a turn of free rein for "
-                "the enemy and a public that notices you did nothing."
+                "run down faster. It does not create treasury funds or replenish arsenal. "
+                "The price is a turn of free rein for the enemy and a public that notices "
+                "you did nothing."
             ),
             "parameters": {
                 "type": "object",
@@ -559,7 +649,7 @@ INTENT = {
     "enum": [
         "attrition", "escalate", "defend", "recover",
         "legitimacy", "deter", "control", "finish",
-        "settle", "stall",
+        "settle", "stall", "intelligence", "rebuild", "rearm",
     ],
     "description": "One word for what this move is meant to achieve. Not a justification.",
 }
@@ -596,6 +686,7 @@ RESPONSE_DECISION_TOOL: Dict[str, Any] = {
                 "enum": ["military", "infrastructure", "civilian"],
             },
             "domain": {"type": "string", "enum": ["air", "naval", "cyber"]},
+            "resource": {"type": "string", "enum": list(INVESTMENTS)},
             "demand": {
                 "type": "array",
                 "items": {"type": "string", "enum": list(ARTICLES)},
@@ -643,9 +734,15 @@ TOOL_TRADEOFFS: Dict[str, str] = {
         "Spends one finite narrative warfare operation to raise enemy unrest. A fabrication can "
         "backfire at home, and any influence operation adds international pressure."
     ),
+    "allocate_resources": (
+        "Spend one turn and a fixed treasury amount on intelligence, reconstruction, "
+        "readiness, defence, or non-nuclear resupply. Intelligence reaches rounded enemy "
+        "estimates at 40 and exact operational state at 70."
+    ),
     "hold": (
         "Large capacity refit, small defence gain everywhere, clears strike fatigue, burns "
-        "down cooldowns faster, and gives the enemy a free turn."
+        "down cooldowns faster, and gives the enemy a free turn. Does not replenish "
+        "treasury or arsenal."
     ),
     "open_talks": (
         "Buys a ceasefire. No ordnance either way, both sides refit at double rate, both "
@@ -727,6 +824,8 @@ def available_tools(
             continue
         if budget is not None and TOOL_META[name]["price"] > budget:
             continue
+        if name == "allocate_resources" and not affordable_investments(budget):
+            continue
         if name == "strike":
             if strike_streak >= STRIKE_STREAK_LIMIT:
                 continue
@@ -787,6 +886,11 @@ def schemas_for(
             continue
         if name == "strike":
             schema = _respecify(schema, {"weapon": {"type": "string", "enum": live}})
+        elif name == "allocate_resources":
+            schema = _respecify(
+                schema,
+                {"resource": {"type": "string", "enum": affordable_investments(budget)}},
+            )
         elif name == "table_terms":
             clause = {"type": "string", "enum": list(ARTICLES)}
             schema = _respecify(schema, {

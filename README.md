@@ -9,8 +9,8 @@ never command a combat move or join a side.
 
 - **Aurelia** (west) and **Korsav** (east), one agent each. Every move is a **tool call** —
   `strike`, `blockade`, `fortify`, `intl_appeal`, `address_public`, `propaganda`,
-  `open_talks`, `table_terms`, `accept_terms`, `walk_out`, `surrender`, `hold`. Nothing is
-  free text.
+  `allocate_resources`, `open_talks`, `table_terms`, `accept_terms`, `walk_out`,
+  `surrender`, `hold`. Nothing is free text.
 - **The Arbiter** sees both declared actions and the true world state, judges each for
   credibility, and returns a bounded modifier plus a news bulletin.
 - **You** give history one small nudge to trigger the conflict. During the war, islands
@@ -26,9 +26,9 @@ Hosted model traffic uses the Responses API in three isolated lanes. Aurelia and
 each get their own short, match-local chain (four decisions by default), then restart from
 the canonical state. The arbiter is stateless: every ruling receives the true current state
 and both simultaneous declarations, with no commander conversation and no previous response
-ID. Local Ollama keeps its OpenAI-compatible Chat Completions path. The stable instructions
-and decision schema sit at the front of every hosted request so automatic prompt caching can
-reuse that prefix; only current state and recent public events change.
+ID. The stable instructions and decision schema sit at the front of every request so
+automatic prompt caching can reuse that prefix; only current state and recent public events
+change.
 
 Each nation sees its own exact stats but only **coarse bands** of the enemy's
 (`strong` / `holding` / `strained` / `critical`). Hidden information is the game. Public
@@ -42,8 +42,8 @@ to itself. The same priors read the same brief, reach for the same tool, and the
 reaching for it was reasonable — and whatever comes out is a property of the model, not of
 the balance.
 
-In hosted production the two commanders get different models in the same price tier,
-because the experiment has to be about the models rather than about who paid more:
+The two commanders get different OpenAI models in the same price tier, because the
+experiment has to be about the models rather than about who paid more:
 
 | chair | default | $/1M in · out |
 |---|---|---|
@@ -61,10 +61,6 @@ permanently the rich republic, which is a bias of its own.
 A whole twelve-turn match costs well under a cent. Which model is in which chair is shown
 in the UI beside each country's name and stamped into every match log. `NATION_MODEL`
 overrides both commanders for a controlled single-model run.
-
-Local development intentionally trades that experimental separation for a free, private
-loop: `gemma4:26b` fills all three chairs through Ollama. The hosted pairing remains
-separately configurable for production.
 
 ## The quarrel
 
@@ -122,11 +118,12 @@ from the same control.
 
 A symmetric war is the same war every time: whatever the balance says is best, both sides
 play it, and the only variable left is the dice. Every profile field in `nations.py` is
-read by the engine — none of it is flavour.
+read by the simulation — none of it is flavour.
 
 |  | Aurelia | Korsav |
 |---|---|---|
 | treasury | $70B | $96B |
+| intelligence | 45 (numeric estimates) | 35 (coarse intelligence) |
 | arm | precision air and cyber | deep drone magazine and a real navy |
 | weak at | the sea, and cyber defence is Korsav's problem not hers | cyber, in both directions |
 | the world | extends her credit (×0.75 pressure) | assumes the worst (×1.30) |
@@ -163,6 +160,20 @@ island's unrest; a fabrication can backfire at home and always adds internationa
 
 The two pull against each other on purpose. Silencing your own people costs you credibility
 abroad, and the country that is good at one is bad at the other.
+
+### Intelligence and resource allocation
+
+Intelligence is a 0–100 nation stat, configured with the other opening meters and changed
+during a match by spending treasury on `allocate_resources`:
+
+- **0–39:** broad enemy bands only.
+- **40–69:** rounded estimates of enemy forces, infrastructure, treasury, unrest, defences,
+  and arsenal depth.
+- **70–100:** the opponent's exact current operational state.
+
+The same action can spend a turn and a fixed treasury package on intelligence,
+infrastructure reconstruction, military readiness, air/naval/cyber defence, or conventional
+and narrative resupply. Nuclear weapons cannot be replenished.
 
 ### The dead
 
@@ -244,8 +255,10 @@ national spending.
 There is no GDP meter or automatic income. Every sortie and most other tools are paid from
 a finite treasury: a drone swarm is $6B, a missile $18B, and a blockade $16B, against an
 opening war chest of $70B for Aurelia and $96B for Korsav. International pressure and
-blockades drain it; council stabilization funding can refill it. Run out and unaffordable
-tools disappear while public unrest rises.
+blockades drain it; council stabilization funding can refill it. A nation can convert the
+remaining treasury into intelligence, reconstruction, readiness, defence, or resupply, but
+that allocation consumes its entire turn. Run out and unaffordable tools disappear while
+public unrest rises.
 
 Bankruptcy is a way to lose a war without ever losing a battle.
 
@@ -261,15 +274,20 @@ MOCK=1 ./.venv/bin/uvicorn app.main:app --port 8077
 cd web && npm install && npm run dev    # http://localhost:5173
 ```
 
-`MOCK=1` runs scripted commanders with no model calls. A normal development run uses the
-local Ollama service and `gemma4:26b` for all three chairs, so start Ollama and then run:
+`MOCK=1` runs scripted commanders with no model calls. For a live match, put an OpenAI API
+key in `backend/.env` and start the backend without `MOCK=1`:
 
 ```bash
+OPENAI_API_KEY=sk-proj-...
 ./.venv/bin/uvicorn app.main:app --port 8077
 ```
 
-An `OPENAI_API_KEY` left in `backend/.env` is ignored during local development. Hosted
-deployments must opt in with `APP_ENV=production` (or `LLM_PROVIDER=openai`).
+All three chairs use OpenAI's Responses API and the model panel shown above. Without a key,
+the backend automatically uses the scripted policy.
+
+In development, enable **dev view** in the header to inspect each chair's live system
+instructions, current-state brief, available tools, response, latency, usage, and errors.
+The stream is opt-in, never enters match recordings, and is unavailable in production.
 
 Balance work runs in a batch:
 
@@ -340,14 +358,11 @@ list above — the price of a bench made of one real war instead of five picked 
 
 | var | default | |
 |---|---|---|
-| `APP_ENV` | `development` | `production` selects the hosted provider by default |
-| `LLM_PROVIDER` | `ollama` locally, `openai` in production | model API provider |
-| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434/v1` | local OpenAI-compatible endpoint |
-| `OLLAMA_MODEL` | `gemma4:26b` | all three local chairs |
-| `OPENAI_API_KEY` | — | required by the hosted provider; absent ⇒ mock mode |
-| `WEST_MODEL` | local model / `gpt-5-nano` | Aurelia's chair |
-| `EAST_MODEL` | local model / `gpt-4.1-nano` | Korsav's chair |
-| `ARBITER_MODEL` | local model / `gpt-5-nano` | the referee |
+| `APP_ENV` | `development` | controls development diagnostics defaults |
+| `OPENAI_API_KEY` | — | required for live model calls; absent ⇒ mock mode |
+| `WEST_MODEL` | `gpt-5-nano` | Aurelia's chair |
+| `EAST_MODEL` | `gpt-4.1-nano` | Korsav's chair |
+| `ARBITER_MODEL` | `gpt-5-nano` | the referee |
 | `NATION_MODEL` | — | if set, overrides *both* commanders (single-model run) |
 | `SWAP_MODELS` | — | `1` reverses which model commands which island |
 | `MAX_TURNS` | `12` | |

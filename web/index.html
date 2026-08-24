@@ -118,6 +118,13 @@
           <span id="turn" class="pill">turn 0</span>
           <span class="pill council-funds" id="council-funds"></span>
           <span id="phase" class="pill">briefing</span>
+          <button
+            id="btn-dev"
+            class="pill ghost hidden"
+            aria-controls="dev-panel"
+            aria-pressed="false"
+            title="inspect live model prompts and responses"
+          >dev view</button>
           <button id="btn-help" class="pill ghost" title="what is this?">?</button>
         </div>
       </header>
@@ -286,6 +293,33 @@
         </div>
       </div>
     </div>
+
+    <aside class="dev-panel hidden" id="dev-panel" aria-label="LLM development inspector">
+      <div class="dev-head">
+        <div>
+          <div class="tag">live model diagnostics</div>
+          <h2>Under the Hood</h2>
+        </div>
+        <div class="dev-actions">
+          <button id="btn-dev-clear">clear</button>
+          <button id="btn-dev-close" aria-label="close development view">close</button>
+        </div>
+      </div>
+      <div class="dev-warning">
+        Development only · compact activity first. Expand any row for exact prompts and
+        raw OpenAI data. Credentials are never included.
+      </div>
+      <div class="dev-tabs" role="tablist" aria-label="model agent">
+        <button id="dev-tab-west" class="on" role="tab">Aurelia <span>0</span></button>
+        <button id="dev-tab-east" role="tab">Korsav <span>0</span></button>
+        <button id="dev-tab-arbiter" role="tab">Arbiter <span>0</span></button>
+      </div>
+      <div class="dev-context">
+        <strong id="dev-agent-name">Aurelia</strong>
+        <span id="dev-model">waiting for first request</span>
+      </div>
+      <div class="dev-stream" id="dev-stream"></div>
+    </aside>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

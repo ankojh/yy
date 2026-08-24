@@ -77,6 +77,8 @@ async def ws(socket: WebSocket) -> None:
 
             if command == "configure":
                 await game.configure(msg.get("setup") or {})
+            elif command == "dev_view" and isinstance(game, Game):
+                await game.set_dev_view(msg.get("enabled") is True)
             elif command == "ignite":
                 await game.ignite(msg.get("ignitions", []), msg.get("custom", ""))
             elif command == "step":

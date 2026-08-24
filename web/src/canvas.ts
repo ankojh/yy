@@ -1160,7 +1160,7 @@ function placeholder(side: Side): Nation {
   return {
     side,
     name: side === "west" ? "Aurelia" : "Korsav",
-    integrity: 100, morale: 60, military: 70, standing: 70,
+    integrity: 100, morale: 60, military: 70, intelligence: 40, standing: 70,
     gdp: 70, gdp_base: 70, budget: 80,
     intl_pressure: 0, unrest: 10, propaganda: 30, casualties: 0,
     defenses: { air: 20, naval: 20, cyber: 20 },

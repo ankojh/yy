@@ -2,6 +2,8 @@
 
 import asyncio
 import random
+import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from . import agents, engine
@@ -395,6 +397,28 @@ COUNCIL_NUDGES = [
 ]
 
 
+_DEV_SECRET_KEYS = {
+    "authorization", "api_key", "openai_api_key", "cookie", "set-cookie"
+}
+
+
+def _sanitize_dev_trace(value: Any) -> Any:
+    """Defense in depth before private diagnostics cross the development socket."""
+    if isinstance(value, str) and settings.openai_api_key:
+        return value.replace(settings.openai_api_key, "[redacted]")
+    if isinstance(value, dict):
+        return {
+            str(key): "[redacted]" if str(key).lower() in _DEV_SECRET_KEYS
+            else _sanitize_dev_trace(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_dev_trace(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_dev_trace(item) for item in value]
+    return value
+
+
 def reset_payload() -> Dict[str, Any]:
     """Everything the UI needs before a shot is fired: policy deck, aid menu, and lore.
 
@@ -424,6 +448,10 @@ def reset_payload() -> Dict[str, Any]:
             for key, action in SUPPORT_ACTIONS.items()
         ],
         "mock": settings.use_mock,
+        # Raw prompts are available only on an explicitly enabled local development
+        # connection. Production never advertises or streams this capability.
+        "dev_view_available": settings.app_env != "production" and settings.llm_debug,
+        "llm_provider": "openai",
         "max_turns": settings.max_turns,
         "balance_version": BALANCE_VERSION,
         # Who is sitting in which chair. Never hidden: a match between two different
@@ -467,6 +495,9 @@ class Game:
             "west": agents.ResponseSession(),
             "east": agents.ResponseSession(),
         }
+        self._dev_view = False
+        self._trace_started: Dict[str, float] = {}
+        self._trace_sequence = 0
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ events
@@ -483,13 +514,55 @@ class Game:
         await self.emit("state", state=self.state.model_dump())
 
     async def record_llm_trace(self, payload: Dict[str, Any]) -> None:
-        """Keep safe usage counters always; keep raw model I/O only when opted in."""
-        if not self._file:
-            return
-        if payload.get("direction") == "usage":
+        """Write diagnostics and optionally stream a sanitized development snapshot."""
+        if self._file and payload.get("direction") == "usage":
             self._file.write_llm_usage(payload)
-        elif settings.llm_debug:
+        elif self._file and settings.llm_debug:
             self._file.write_llm_trace(payload)
+
+        if not self._dev_view or not self._emit:
+            return
+
+        direction = str(payload.get("direction") or "")
+        agent = str(payload.get("agent") or "unknown")
+        now = time.perf_counter()
+        if direction == "sent":
+            self._trace_started[agent] = now
+        started = self._trace_started.get(agent)
+        elapsed_ms = round((now - started) * 1000) if started is not None else None
+        if direction in ("received", "error"):
+            self._trace_started.pop(agent, None)
+
+        self._trace_sequence += 1
+        trace = _sanitize_dev_trace(payload)
+        trace.update(
+            {
+                "sequence": self._trace_sequence,
+                "provider": "openai",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "elapsed_ms": elapsed_ms,
+            }
+        )
+        # Diagnostics are intentionally outside `emit`: they must never enter the match
+        # log or a replay fixture, where private prompts would become durable gameplay.
+        await self._emit(engine.event("llm_trace", self.state, **trace))
+
+    async def set_dev_view(self, enabled: bool) -> None:
+        available = settings.app_env != "production" and settings.llm_debug
+        self._dev_view = bool(enabled and available)
+        if not self._dev_view:
+            self._trace_started.clear()
+        if self._emit:
+            await self._emit(
+                engine.event(
+                    "dev_status",
+                    self.state,
+                    available=available,
+                    enabled=self._dev_view,
+                    provider="openai",
+                    panel=settings.panel,
+                )
+            )
 
     async def _beat(self, mult: float = 1.0) -> None:
         """Deliberate pause, in multiples of BEAT so setting BEAT=0 truly disables pacing."""
@@ -532,7 +605,10 @@ class Game:
             for side, fields in card["effects"].items():
                 nation = self.state.nation(side)
                 for field, amount in fields.items():
-                    if field not in {"integrity", "military", "budget", "unrest", "intl_pressure"}:
+                    if field not in {
+                        "integrity", "military", "intelligence", "budget", "unrest",
+                        "intl_pressure",
+                    }:
                         continue
                     # The treasury is money, not a meter, and does not stop at a hundred.
                     # Korsav opens on $96B, so a card that moved its budget at all was
@@ -563,10 +639,7 @@ class Game:
                     "west_model": settings.panel["west"],
                     "east_model": settings.panel["east"],
                     "arbiter_model": settings.panel["arbiter"],
-                    "llm_api": (
-                        "responses" if settings.llm_provider == "openai"
-                        else "chat_completions"
-                    ),
+                    "llm_api": "responses",
                     "response_chain_turns": settings.response_chain_turns,
                     "mock": settings.use_mock,
                     "max_turns": settings.max_turns,
@@ -585,7 +658,7 @@ class Game:
             if not isinstance(block, dict):
                 continue
             nation = self.state.nation(side)
-            for field in ("integrity", "military", "unrest"):
+            for field in ("integrity", "military", "intelligence", "unrest"):
                 if field in block:
                     try:
                         setattr(nation, field, clamp(float(block[field])))
@@ -796,7 +869,9 @@ class Game:
 
             # Bind this match's private diagnostics file while model calls run. Raw
             # prompts never enter the replay stream or cross the websocket.
-            trace_token = agents.bind_trace(self.record_llm_trace if self._file else None)
+            trace_token = agents.bind_trace(
+                self.record_llm_trace if self._file or self._dev_view else None
+            )
             try:
                 # Both commanders decide simultaneously — neither sees the other's move.
                 west, east = await asyncio.gather(

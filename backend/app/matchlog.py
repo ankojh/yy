@@ -111,6 +111,7 @@ class MatchLog:
                 WEAPON_LABEL.get(args["weapon"], args["weapon"]) if "weapon" in args else "",
                 args.get("target", ""),
                 args.get("domain", ""),
+                str(args.get("resource", "")).replace("_", " "),
             ]
             detail = " → ".join(b for b in bits if b)
             head = f"**{p.get('name')}** — `{p.get('tool')}`"

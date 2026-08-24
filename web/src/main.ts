@@ -1,4 +1,5 @@
 import { WarMap } from "./canvas";
+import { configureDevView, handleDevStatus, initDevView, pushDevTrace } from "./dev";
 import {
   $, clearStage, openQuarrel, renderEvent, renderReplay, renderState,
   setDwell, setReference,
@@ -105,6 +106,16 @@ function connect() {
   socket.onmessage = (msg) => {
     const ev: GameEvent = JSON.parse(msg.data);
 
+    if (ev.type === "llm_trace") {
+      pushDevTrace(ev);
+      return;
+    }
+
+    if (ev.type === "dev_status") {
+      handleDevStatus(ev);
+      return;
+    }
+
     // A jump is the whole event stream up to some turn, replayed at once. The UI is a
     // fold, so that is the only correct way to arrive at a turn — but the transient half
     // of it (bubbles, verdicts) is thirty seconds of animation fired in one frame, and
@@ -130,6 +141,7 @@ function connect() {
       // the jump menu along with everything else.
       replay = ev.payload.replay ?? null;
       renderReplay(replay);
+      configureDevView(ev.payload);
       // Reference data: the three chairs, and the names of the disputed clauses. Sent
       // once and held, because every panel below needs it and none of them owns it.
       setReference(ev.payload.panel ?? {}, ev.payload.articles ?? {});
@@ -342,4 +354,5 @@ $<HTMLSelectElement>("replay-speed").onchange = (e) => {
   send("speed", { value });
 };
 
+initDevView(send);
 connect();

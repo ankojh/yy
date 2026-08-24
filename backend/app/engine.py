@@ -16,6 +16,7 @@ from .lore import ARTICLES, CORE_ARTICLES, SETTLEMENT_MINIMUM
 from .state import Action, Atrocity, Event, GameState, Nation, Ruling, clamp
 from .tools import (
     BLOCKADE_DEATHS,
+    INVESTMENTS,
     TOOL_META,
     WEAPONS,
     casualties_from,
@@ -380,6 +381,48 @@ def apply_action(
                 f"{me.name}'s narrative warfare operation is exposed and backfires at home."
             )
         _isolate(me, 6, deltas)
+
+    elif tool == "allocate_resources":
+        resource = str(action.args.get("resource", ""))
+        package = INVESTMENTS.get(resource)
+        if not package:
+            notes.append(f"{me.name} announces an investment programme with no appropriation.")
+            return deltas, notes
+        price = int(package["price"])
+        if price > me.budget:
+            notes.append(
+                f"{me.name}'s treasury cannot fund {package['label']} at {usd(price)}."
+            )
+            return deltas, notes
+
+        _spend(me, price, deltas)
+        gain = int(package["gain"])
+        kind = str(package["kind"])
+        if kind == "stat":
+            _bump(me, str(package["field"]), gain, deltas)
+        elif kind == "defense":
+            domain = str(package["domain"])
+            before = me.defenses.get(domain, 0)
+            after = clamp(before + gain)
+            me.defenses[domain] = after
+            if after != before:
+                deltas.append({
+                    "side": me.side, "field": f"defenses.{domain}",
+                    "delta": after - before, "value": after,
+                })
+        elif kind == "arsenal":
+            weapon = str(package["weapon"])
+            before = me.arsenal.get(weapon, 0)
+            after = min(30, before + gain)
+            me.arsenal[weapon] = after
+            if after != before:
+                deltas.append({
+                    "side": me.side, "field": f"arsenal.{weapon}",
+                    "delta": after - before, "value": after,
+                })
+        notes.append(
+            f"{me.name} commits {usd(price)} to {package['label']}."
+        )
 
     elif tool == "open_talks":
         talks = world.talks

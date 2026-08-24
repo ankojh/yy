@@ -80,6 +80,10 @@ class Nation(BaseModel):
     # and resolve only infrastructure, military, treasury, unrest, and pressure.
     morale: int = 60
     military: int = 70      # capacity to act; spent by every offensive move
+    # How much of the opponent's operational state this cabinet can see. Low values
+    # yield broad intelligence bands; sustained investment eventually unlocks the
+    # opponent's exact current state in the commander brief.
+    intelligence: int = 40
     standing: int = 70
     integrity: int = 100    # infrastructure and territory still intact
     gdp: int = 70
@@ -273,6 +277,7 @@ def _nation(side: str) -> Nation:
         creed=ACCOUNTS[side]["creed"],
         morale=profile["morale"],
         military=profile["military"],
+        intelligence=profile.get("intelligence", 40),
         standing=profile["standing"],
         integrity=profile["integrity"],
         gdp=profile["gdp"],

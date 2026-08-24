@@ -124,6 +124,70 @@ def test_logs_never_contain_the_api_key(tmp_path, monkeypatch):
         assert secret not in ev.model_dump_json()
 
 
+def test_dev_view_streams_sanitized_traces_outside_the_replay_log(monkeypatch):
+    streamed = []
+    secret = "sk-test-must-never-cross-the-socket"
+    monkeypatch.setattr("app.config.settings.app_env", "development")
+    monkeypatch.setattr("app.config.settings.llm_debug", True)
+    monkeypatch.setattr("app.config.settings.openai_api_key", secret)
+
+    async def emit(event):
+        streamed.append(event)
+
+    async def go():
+        game = Game(emit=emit, write_log=False)
+        await game.set_dev_view(True)
+        await game.record_llm_trace({
+            "agent": "west",
+            "direction": "sent",
+            "model": "gpt-5-nano",
+            "api": "responses",
+            "content": {
+                "messages": [{"role": "user", "content": "private state"}],
+                "api_key": secret,
+                "nested": {"message": f"request accidentally contained {secret}"},
+                "headers": {"set-cookie": "transient-cookie-value"},
+            },
+        })
+        await game.record_llm_trace({
+            "agent": "west",
+            "direction": "received",
+            "model": "gpt-5-nano",
+            "api": "responses",
+            "content": {"tool_call": {"name": "hold", "arguments": {}}},
+        })
+        return game
+
+    game = asyncio.run(go())
+    traces = [event for event in streamed if event.type == "llm_trace"]
+    assert [event.payload["direction"] for event in traces] == ["sent", "received"]
+    assert traces[0].payload["content"]["api_key"] == "[redacted]"
+    assert traces[0].payload["content"]["headers"]["set-cookie"] == "[redacted]"
+    assert secret not in traces[0].model_dump_json()
+    assert traces[1].payload["elapsed_ms"] is not None
+    assert not [event for event in game.log if event.type == "llm_trace"]
+
+
+def test_dev_view_cannot_be_enabled_in_production(monkeypatch):
+    streamed = []
+    monkeypatch.setattr("app.config.settings.app_env", "production")
+    monkeypatch.setattr("app.config.settings.llm_debug", True)
+
+    async def emit(event):
+        streamed.append(event)
+
+    async def go():
+        game = Game(emit=emit, write_log=False)
+        await game.set_dev_view(True)
+        await game.record_llm_trace({"agent": "west", "direction": "sent"})
+
+    asyncio.run(go())
+    status = next(event for event in streamed if event.type == "dev_status")
+    assert status.payload["available"] is False
+    assert status.payload["enabled"] is False
+    assert not [event for event in streamed if event.type == "llm_trace"]
+
+
 def test_concurrent_matches_do_not_share_a_log_file(tmp_path):
     a, b = MatchLog(tmp_path), MatchLog(tmp_path)
     try:

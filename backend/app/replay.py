@@ -349,6 +349,7 @@ class ReplayGame:
             mock=not self.recording.live,
             panel=self.recording.panel,
             replay=self.block(),
+            dev_view_available=False,
         )
         payload["reveal_ms"] = int(payload["reveal_ms"] / self.speed)
         await self._send(Event(type="reset", payload=payload))
