@@ -251,14 +251,7 @@ def _fatigue_block(me) -> Dict[str, Any]:
 def _economy_block(me) -> Dict[str, Any]:
     """The finite treasury available for actions."""
     return {
-        "currency": "every money figure in this brief is billions of US dollars",
         "treasury_usd_billions": me.budget,
-        "note": (
-            "The treasury does not refill automatically. Every paid action spends it, "
-            "international pressure drains it, and an empty treasury withdraws tools "
-            "you can no longer afford. allocate_resources converts treasury into "
-            "intelligence, reconstruction, readiness, defence, or resupply."
-        ),
     }
 
 
@@ -266,17 +259,7 @@ def _pressure_block(me) -> Dict[str, Any]:
     """The two constituencies that can end this war without firing anything."""
     return {
         "international_pressure": me.intl_pressure,
-        "international_note": (
-            "Rises with every attack, scaled by how heavy the weapon was and how soft the "
-            "target. Every 25 points drains $1B per turn, and sanctions make attacks more "
-            "expensive. An international appeal or council intervention can move it."
-        ),
         "public_unrest": me.unrest,
-        "public_note": (
-            "Rises from damage done to your country, from civilian deaths on either side, "
-            "from an empty treasury, narrative operations, and the war continuing. Your "
-            "island's political character scales every increase. At 100 the government falls."
-        ),
         "narrative_warfare_remaining": me.arsenal.get("narrative", 0),
     }
 
@@ -310,12 +293,6 @@ def _toll_block(state: GameState, side: str) -> Dict[str, Any]:
         "dead_in_theirs": foe.casualties,
         "protected_places_they_have_destroyed_in_your_country": entries(side),
         "protected_places_you_have_destroyed_in_theirs": entries(foe.side),
-        "note": (
-            "The first list is your case. Name a place and its toll in an intl_appeal or "
-            "a propaganda broadcast and it lands; gesture vaguely at aggression and it "
-            "does not. The second list is theirs, and it is why the world is charging you "
-            "what it is charging you."
-        ),
     }
 
 
@@ -342,16 +319,6 @@ def _talks_block(state: GameState, side: str) -> Dict[str, Any]:
             key: {"you": talks.stance(key, side), "them": talks.stance(key, foe.side)}
             for key in ARTICLES
         },
-        "the_clauses": article_brief(),
-        "to_end_the_war_here": (
-            f"both of {[ARTICLES[c]['title'] for c in CORE_ARTICLES]} settled, plus at "
-            f"least {SETTLEMENT_MINIMUM - len(CORE_ARTICLES)} more clause(s)."
-        ),
-        "what_this_ceasefire_is_worth_to_you": (
-            "Both sides refit heavily and both publics calm every round it holds. "
-            "If you are the weaker side, every empty round is a round you needed. If you "
-            "are the stronger side, every empty round is one you are giving away."
-        ),
     }
 
 
@@ -362,7 +329,7 @@ def _option_block(state: GameState, side: str, legal: List[str]) -> Dict[str, An
     blockaded = me.effects.blockaded > 0
     out: Dict[str, Any] = {}
     for tool in legal:
-        entry: Dict[str, Any] = {"effect": TOOL_TRADEOFFS.get(tool, "")}
+        entry: Dict[str, Any] = {}
         if tool == "strike":
             entry["per_weapon"] = {
                 w: {
@@ -528,49 +495,9 @@ def _brief(state: GameState, side: str, legal: List[str]) -> str:
             },
             "grievances_so_far": world.grievances[-6:],
             "war_log": _war_log(state, side),
-            "how_this_war_ends": {
-                "you_lose_if": (
-                    "your infrastructure reaches 0, or public unrest reaches 100 and "
-                    "the government falls"
-                ),
-                "they_lose_if": "the same happens to them",
-                "nobody_loses_if": (
-                    "the two of you settle the disputed clauses at a table. This is the "
-                    "only ending that is not a defeat for somebody."
-                ),
-                "targeting": (
-                    "Military capacity regenerates every turn, so striking it only delays "
-                    "them. 'infrastructure' strikes directly approach a win. 'civilian' "
-                    "strikes inflame their streets, at ruinous cost to your international "
-                    "pressure and some unrest of your own — and they "
-                    "kill people by the hundred, which the world counts."
-                ),
-                "defence": (
-                    "Their defence number in a domain is the share of your salvo that is "
-                    "shot down before it arrives, and a hardened domain absorbs four "
-                    "fifths of whatever gets through. Read 'interception' per weapon in "
-                    "the options and fire through the door they left open. The same is "
-                    "true of you: fortify is not a wasted turn, it is a permanent tax on "
-                    "everything they fire at you afterwards."
-                ),
-                "pressure": (
-                    "International pressure drains treasury and makes attacks expensive. "
-                    "intl_appeal moves it onto the enemy; narrative warfare raises enemy "
-                    "unrest but add pressure to you."
-                ),
-                "attrition": (
-                    "blockade damages them every turn for three turns while you do "
-                    "something else, cuts their trade, and is the cheapest way to bankrupt "
-                    "an enemy. Over a long war it outperforms any single strike."
-                ),
-                "economy": (
-                    "A war you cannot pay for is a war you lose slowly. Watch your net "
-                    "per turn, not just your treasury."
-                ),
-            },
             "your_danger": _warnings(me, state),
             "tools_you_may_use_this_turn": legal,
-            "what_each_option_costs_and_buys": _option_block(state, side, legal),
+            "what_each_legal_option_costs_now": _option_block(state, side, legal),
         },
         indent=2,
     )
@@ -616,7 +543,7 @@ def _continuation_brief(state: GameState, side: str, legal: List[str]) -> str:
             "the_negotiating_table": _talks_block(state, side),
             "your_danger": _warnings(me, state),
             "tools_you_may_use_this_turn": legal,
-            "what_each_option_costs_and_buys": _option_block(state, side, legal),
+            "what_each_legal_option_costs_now": _option_block(state, side, legal),
             "instruction": (
                 "Treat this current state as authoritative when it differs from anything "
                 "remembered earlier in the response chain. Choose one legal action."
@@ -1132,6 +1059,96 @@ COMMAND_DOCTRINE = (
 )
 
 
+# Kept outside the per-turn state on purpose. The default commander models only support
+# implicit prompt caching and need a long identical prefix before changing state. This
+# reference is sent once at the start of a short Responses chain, retained through
+# `previous_response_id`, and sent again ahead of the dynamic brief when a chain resets.
+# It contains rules that used to be repeated inside every changing JSON brief.
+COMMANDER_SHARED_REFERENCE: Dict[str, Any] = {
+    "reading_the_turn_brief": (
+        "The user message after this reference is the authoritative state for the current "
+        "turn. Only actions listed there are legal, and its current prices, loaded weapons, "
+        "defences, intelligence, cooldowns, and negotiation positions override older state."
+    ),
+    "money_and_resources": {
+        "currency": "Every money figure is billions of US dollars.",
+        "treasury": (
+            "Treasury never refills automatically. Paid actions spend it, international "
+            "pressure drains it, and an empty treasury removes unaffordable actions. "
+            "allocate_resources converts treasury into intelligence, reconstruction, "
+            "readiness, defence, or non-nuclear resupply, and consumes the whole turn."
+        ),
+        "arsenal": (
+            "Rounds are finite and separate from military readiness. Spending a round removes "
+            "it; only eligible non-nuclear resupply can replace one."
+        ),
+    },
+    "international_pressure_and_public_unrest": {
+        "international_pressure": (
+            "Attacks raise international pressure according to weapon weight and target. "
+            "Every 25 points drains $1B per turn, sanctions make attacks more expensive, "
+            "and a credible international appeal can move pressure onto the enemy."
+        ),
+        "public_unrest": (
+            "Damage, civilian deaths, an empty treasury, narrative warfare, and the war's "
+            "duration raise unrest according to the nation's political character. At 100 "
+            "the government falls. address_public lowers unrest."
+        ),
+    },
+    "casualties_and_evidence": (
+        "Casualties are public. Protected places in the current brief are evidence: name a "
+        "real place and toll in an international appeal or propaganda message for credibility. "
+        "Vague claims, or claims contradicted by the record, do not land."
+    ),
+    "how_this_war_ends": {
+        "you_lose_if": "Your infrastructure reaches 0 or public unrest reaches 100.",
+        "they_lose_if": "The same happens to the enemy.",
+        "nobody_loses_if": (
+            "Both sides settle the disputed clauses at a table. This is the only ending that "
+            "is not a defeat for somebody."
+        ),
+        "targeting": (
+            "Military readiness regenerates, so a military strike delays rather than directly "
+            "wins. Infrastructure strikes approach a win. Civilian strikes inflame the target's "
+            "streets but kill by the hundred and impose ruinous international costs."
+        ),
+        "defence": (
+            "A defence number is the share of an incoming salvo intercepted in that domain. "
+            "A hardened domain also absorbs four fifths of what gets through. Fortification "
+            "permanently taxes future attacks in that domain and hardens it temporarily."
+        ),
+        "attrition": (
+            "A blockade applies three turns of military, infrastructure, treasury, and unrest "
+            "attrition while its owner takes other actions. Over a long war it can outperform "
+            "one strike and bankrupt an enemy."
+        ),
+    },
+    "negotiations": {
+        "clauses": article_brief(),
+        "settlement_requirement": (
+            f"Settle both core clauses, {[ARTICLES[c]['title'] for c in CORE_ARTICLES]}, plus "
+            f"at least {SETTLEMENT_MINIMUM - len(CORE_ARTICLES)} other clause(s)."
+        ),
+        "ceasefire_value": (
+            "While talks are open neither side may strike or blockade; both sides refit heavily "
+            "and both publics calm. Empty rounds favour the weaker side and cost the stronger "
+            "side time. Conceding clauses costs unrest at home."
+        ),
+    },
+    "what_each_action_is_for": TOOL_TRADEOFFS,
+}
+
+
+def _commander_developer_prompt(side: str) -> str:
+    """Stable, cacheable instructions and reference material for one commander's chair."""
+    return "\n\n".join([
+        system_prompt(side),
+        "STABLE CAMPAIGN REFERENCE\n" + json.dumps(
+            COMMANDER_SHARED_REFERENCE, indent=2, sort_keys=True
+        ),
+    ])
+
+
 def _response_controls(model: str, temperature: float) -> Dict[str, Any]:
     """GPT-5 uses reasoning controls; older hosted models retain sampling controls."""
     if model.startswith("gpt-5"):
@@ -1286,8 +1303,12 @@ async def decide(
             if starts_chain
             else _continuation_brief(state, side, legal)
         )
-        response_input: Any = turn_input
-        if previous:
+        if starts_chain:
+            response_input: Any = [
+                {"role": "developer", "content": _commander_developer_prompt(side)},
+                {"role": "user", "content": turn_input},
+            ]
+        else:
             if not response_session.previous_call_id:
                 raise ValueError("Responses chain has no prior function call id")
             response_input = [
@@ -1298,10 +1319,9 @@ async def decide(
                 },
                 {"role": "user", "content": turn_input},
             ]
-        cache_key = f"yudhyantra:commander:{side}:v1:{model}"
+        cache_key = f"yudhyantra:commander:{side}:v2:{model}"
         request: Dict[str, Any] = {
             "model": model,
-            "instructions": system_prompt(side),
             "input": response_input,
             "tools": [RESPONSE_DECISION_TOOL],
             "tool_choice": {"type": "function", "name": "decide_turn"},

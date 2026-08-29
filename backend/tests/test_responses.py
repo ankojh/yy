@@ -77,14 +77,20 @@ def test_commander_chain_is_short_and_restarts_from_canonical_state(monkeypatch)
     assert "previous_response_id" not in first
     assert second["previous_response_id"] == "resp-1"
     assert "previous_response_id" not in third
-    assert "how_this_war_ends" in first["input"]
+    assert "instructions" not in first
+    assert first["input"][0]["role"] == "developer"
+    assert first["input"][1]["role"] == "user"
+    assert "how_this_war_ends" in first["input"][0]["content"]
     assert second["input"][0] == {
         "type": "function_call_output",
         "call_id": "call-resp-1",
         "output": "The declared action was accepted and resolved.",
     }
     assert "authoritative_current_state" in second["input"][1]["content"]
-    assert "how_this_war_ends" in third["input"]
+    assert all(item.get("role") != "developer" for item in second["input"])
+    assert third["input"][0] == first["input"][0]
+    assert "how_this_war_ends" in third["input"][0]["content"]
+    assert third["input"][1]["content"] != first["input"][1]["content"]
     assert first["tools"] == second["tools"] == third["tools"]
     assert first["prompt_cache_key"] == second["prompt_cache_key"] == third["prompt_cache_key"]
 
@@ -135,6 +141,8 @@ def test_dev_trace_contains_the_complete_openai_request_and_response(monkeypatch
     assert sent["content"] == fake.responses.requests[0]
     assert sent["content"]["model"] == "gpt-5-nano"
     assert sent["content"]["store"] is True
+    assert "instructions" not in sent["content"]
+    assert sent["content"]["input"][0]["role"] == "developer"
     assert sent["content"]["reasoning"] == {"effort": "minimal"}
     assert received["content"]["id"] == "wire-1"
     assert received["content"]["output"][0]["type"] == "function_call"
