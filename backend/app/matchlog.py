@@ -154,7 +154,10 @@ class MatchLog:
         allowed = {
             "agent", "direction", "model", "turn", "api", "stateless",
             "chain_position", "chain_reset", "input_tokens", "cached_input_tokens",
-            "output_tokens", "total_tokens",
+            "cache_write_tokens", "uncached_input_tokens", "cache_hit_percent",
+            "output_tokens", "reasoning_tokens", "total_tokens",
+            "context_window_tokens", "context_utilization_percent",
+            "remaining_context_tokens",
         }
         record = {
             "type": "llm_usage",

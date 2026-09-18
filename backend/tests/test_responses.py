@@ -9,6 +9,14 @@ from app.config import settings
 from app.state import Action, initial_state
 
 
+def test_commander_statement_guard_allows_longer_declarations():
+    statement = " ".join(f"word{index}" for index in range(48))
+    assert agents._trim(statement) == statement
+
+    overlong = statement + " word48 word49"
+    assert agents._trim(overlong) == statement + "…"
+
+
 def response(response_id: str, arguments: dict, output_text: str = ""):
     return SimpleNamespace(
         id=response_id,
@@ -23,8 +31,11 @@ def response(response_id: str, arguments: dict, output_text: str = ""):
         output_text=output_text,
         usage=SimpleNamespace(
             input_tokens=120,
-            input_tokens_details=SimpleNamespace(cached_tokens=80),
+            input_tokens_details=SimpleNamespace(
+                cached_tokens=80, cache_write_tokens=16,
+            ),
             output_tokens=14,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=6),
             total_tokens=134,
         ),
     )
@@ -136,6 +147,7 @@ def test_dev_trace_contains_the_complete_openai_request_and_response(monkeypatch
 
     sent = next(trace for trace in traces if trace["direction"] == "sent")
     received = next(trace for trace in traces if trace["direction"] == "received")
+    usage = next(trace for trace in traces if trace["direction"] == "usage")
     assert sent["method"] == "POST"
     assert sent["endpoint"] == "/v1/responses"
     assert sent["content"] == fake.responses.requests[0]
@@ -147,6 +159,34 @@ def test_dev_trace_contains_the_complete_openai_request_and_response(monkeypatch
     assert received["content"]["id"] == "wire-1"
     assert received["content"]["output"][0]["type"] == "function_call"
     assert received["content"]["usage"]["total_tokens"] == 134
+    assert usage["uncached_input_tokens"] == 40
+    assert usage["cache_write_tokens"] == 16
+    assert usage["cache_hit_percent"] == 66.67
+    assert usage["reasoning_tokens"] == 6
+    assert usage["context_window_tokens"] == 400_000
+    assert usage["context_utilization_percent"] == 0.0335
+    assert usage["remaining_context_tokens"] == 399_866
+
+
+def test_unknown_model_usage_omits_unverifiable_context_metrics():
+    payload = agents._usage_payload(
+        response("wire-unknown", {"action": "hold"}), "custom-model"
+    )
+
+    assert payload["input_tokens"] == 120
+    assert "context_window_tokens" not in payload
+    assert "context_utilization_percent" not in payload
+    assert "remaining_context_tokens" not in payload
+
+
+def test_gpt_4_1_nano_usage_uses_its_larger_context_window():
+    payload = agents._usage_payload(
+        response("wire-east", {"action": "hold"}), "gpt-4.1-nano"
+    )
+
+    assert payload["context_window_tokens"] == 1_047_576
+    assert payload["remaining_context_tokens"] == 1_047_442
+    assert payload["context_utilization_percent"] == 0.0128
 
 
 def test_arbiter_responses_request_is_stateless(monkeypatch):

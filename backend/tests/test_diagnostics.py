@@ -97,7 +97,11 @@ def test_usage_log_has_counters_but_never_prompt_content(tmp_path):
     log.write_llm_usage({
         "agent": "west", "direction": "usage", "model": "test-west", "turn": 1,
         "api": "responses", "input_tokens": 120, "cached_input_tokens": 80,
-        "output_tokens": 14, "total_tokens": 134,
+        "cache_write_tokens": 16, "uncached_input_tokens": 40,
+        "cache_hit_percent": 66.67, "output_tokens": 14, "reasoning_tokens": 6,
+        "total_tokens": 134, "context_window_tokens": 400_000,
+        "context_utilization_percent": 0.0335,
+        "remaining_context_tokens": 399_866,
         "content": {"input": "private canonical state"},
     })
     log.close()
@@ -105,6 +109,13 @@ def test_usage_log_has_counters_but_never_prompt_content(tmp_path):
     rows = [json.loads(line) for line in log.usage_path.read_text().splitlines()]
     assert rows[1]["type"] == "llm_usage"
     assert rows[1]["cached_input_tokens"] == 80
+    assert rows[1]["cache_write_tokens"] == 16
+    assert rows[1]["uncached_input_tokens"] == 40
+    assert rows[1]["cache_hit_percent"] == 66.67
+    assert rows[1]["reasoning_tokens"] == 6
+    assert rows[1]["context_window_tokens"] == 400_000
+    assert rows[1]["context_utilization_percent"] == 0.0335
+    assert rows[1]["remaining_context_tokens"] == 399_866
     assert "content" not in rows[1]
     assert "private canonical state" not in log.usage_path.read_text()
 

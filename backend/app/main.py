@@ -2,14 +2,16 @@
 
 import asyncio
 import json
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from .config import settings
 from .game import Game
 from .replay import ReplayGame, catalogue, find
+from .speech import SpeechService, SpeechUnavailable
 from .state import Event
 
 app = FastAPI(title="yudhyantra")
@@ -23,6 +25,23 @@ app.add_middleware(
 
 Bench = Union[Game, ReplayGame]
 
+speech_service = SpeechService(
+    settings.cloudflare_account_id,
+    settings.cloudflare_api_token,
+    {"west": settings.tts_voice_west, "east": settings.tts_voice_east},
+    elevenlabs_api_key=settings.elevenlabs_api_key,
+    elevenlabs_voices={
+        "west": settings.elevenlabs_voice_west,
+        "east": settings.elevenlabs_voice_east,
+    },
+)
+
+
+class SpeechRequest(BaseModel):
+    side: Literal["west", "east"]
+    name: str = Field(min_length=1, max_length=80)
+    text: str = Field(min_length=1, max_length=1200)
+
 
 @app.get("/health")
 async def health():
@@ -34,6 +53,10 @@ async def health():
         "mock": settings.use_mock,
         "panel": settings.panel,
         "replay": settings.replay or None,
+        "audio": {
+            "music": "cc0-recorded",
+            "speech": speech_service.provider,
+        },
     }
 
 
@@ -41,6 +64,28 @@ async def health():
 async def replays():
     """Every recording the bench can play, without opening a socket to find out."""
     return {"replays": [r.summary for r in catalogue()]}
+
+
+@app.post("/speech")
+async def speech(request: SpeechRequest):
+    """Return neural commander speech without exposing the provider token."""
+    try:
+        audio = await asyncio.to_thread(
+            speech_service.synthesize,
+            request.side,
+            request.name,
+            request.text,
+        )
+    except SpeechUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return Response(
+        content=audio,
+        media_type="audio/mpeg",
+        headers={
+            "Cache-Control": "private, max-age=86400",
+            "X-Speech-Provider": speech_service.provider,
+        },
+    )
 
 
 @app.websocket("/ws")

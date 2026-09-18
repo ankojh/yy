@@ -158,8 +158,13 @@ def system_prompt(side: str) -> str:
     ])
 
 VOICE = (
-    "Speak in one short sentence, 18 words maximum. Clipped, cold, in character. "
-    "No preamble, no hedging, no explaining your mechanics. You are on the record."
+    "Speak in two or three compact sentences, 32–46 words total. Sound like a wartime "
+    "commander addressing an enemy: direct, forceful, and contemptuous when the facts earn "
+    "it. Name what they did, state what you are doing, and finish with a consequence, order, "
+    "or warning. Use hard verbs and active voice; even restraint must sound deliberate and "
+    "dangerous. Never hide behind generic phrases like 'a proportionate response.' No "
+    "preamble, hedging, game mechanics, or empty slogans. Do not exaggerate beyond the move "
+    "you actually chose—the threat must survive the arbiter. You are on the record."
 )
 
 
@@ -169,7 +174,7 @@ def _client():
     return AsyncOpenAI(api_key=settings.openai_api_key)
 
 
-def _trim(text: str, words: int = 22) -> str:
+def _trim(text: str, words: int = 48) -> str:
     """Bubbles break if a model ignores the word limit. Enforce it here, not in the prompt."""
     parts = (text or "").strip().split()
     return " ".join(parts[:words]) + ("…" if len(parts) > words else "")
@@ -1217,15 +1222,64 @@ def _error_payload(exc: Exception) -> Dict[str, Any]:
     return payload
 
 
-def _usage_payload(response: Any) -> Dict[str, int]:
+_MODEL_CONTEXT_WINDOWS = {
+    # Current limits for the two supported default model families. Keep snapshots
+    # explicit so an unknown override never receives a made-up utilization figure.
+    "gpt-5-nano": 400_000,
+    "gpt-5-nano-2025-08-07": 400_000,
+    "gpt-4.1-nano": 1_047_576,
+    "gpt-4.1-nano-2025-04-14": 1_047_576,
+}
+
+
+def _usage_payload(response: Any, requested_model: str) -> Dict[str, Any]:
+    """Normalize Responses usage and add directly actionable efficiency counters."""
     usage = _read(response, "usage")
-    details = _read(usage, "input_tokens_details")
-    return {
-        "input_tokens": int(_read(usage, "input_tokens", 0) or 0),
-        "cached_input_tokens": int(_read(details, "cached_tokens", 0) or 0),
-        "output_tokens": int(_read(usage, "output_tokens", 0) or 0),
-        "total_tokens": int(_read(usage, "total_tokens", 0) or 0),
+    input_details = _read(usage, "input_tokens_details")
+    output_details = _read(usage, "output_tokens_details")
+    input_tokens = max(0, int(_read(usage, "input_tokens", 0) or 0))
+    cached_input_tokens = min(
+        input_tokens,
+        max(0, int(_read(input_details, "cached_tokens", 0) or 0)),
+    )
+    output_tokens = max(0, int(_read(usage, "output_tokens", 0) or 0))
+    reasoning_tokens = min(
+        output_tokens,
+        max(0, int(_read(output_details, "reasoning_tokens", 0) or 0)),
+    )
+    raw_total = _read(usage, "total_tokens")
+    total_tokens = max(
+        0,
+        int(raw_total if raw_total is not None else input_tokens + output_tokens),
+    )
+    payload: Dict[str, Any] = {
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_input_tokens,
+        "cache_write_tokens": max(
+            0, int(_read(input_details, "cache_write_tokens", 0) or 0)
+        ),
+        "uncached_input_tokens": input_tokens - cached_input_tokens,
+        "cache_hit_percent": round(
+            cached_input_tokens * 100 / input_tokens, 2
+        ) if input_tokens else 0.0,
+        "output_tokens": output_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "total_tokens": total_tokens,
     }
+    effective_model = str(_read(response, "model", requested_model) or requested_model)
+    context_window = (
+        _MODEL_CONTEXT_WINDOWS.get(effective_model)
+        or _MODEL_CONTEXT_WINDOWS.get(requested_model)
+    )
+    if context_window:
+        payload.update({
+            "context_window_tokens": context_window,
+            "context_utilization_percent": round(
+                total_tokens * 100 / context_window, 4
+            ),
+            "remaining_context_tokens": max(0, context_window - total_tokens),
+        })
+    return payload
 
 
 def _response_function_call(response: Any, name: str) -> Any:
@@ -1352,7 +1406,7 @@ async def decide(
         if not call_id:
             raise ValueError("Responses API returned no function call id")
         response_session.remember(response_id, call_id)
-        usage = _usage_payload(resp)
+        usage = _usage_payload(resp, model)
         await _trace(
             agent=side, direction="usage", model=model, turn=state.world.turn,
             api="responses", response_id=response_id,
@@ -1543,7 +1597,7 @@ async def arbitrate(state: GameState, actions: List[Action]) -> Dict[str, Any]:
             content=_wire_payload(resp),
         )
         result = json.loads(str(_read(resp, "output_text", "{}") or "{}"))
-        usage = _usage_payload(resp)
+        usage = _usage_payload(resp, settings.arbiter_model)
         await _trace(
             agent="arbiter", direction="usage", model=settings.arbiter_model,
             turn=state.world.turn, api="responses", stateless=True, **usage,

@@ -70,11 +70,41 @@ const count = (n: number) => n.toLocaleString("en-US");
  */
 const usd = (n: number) => `$${Math.round(n).toLocaleString("en-US")}B`;
 
-const flag = (n: Nation) => `<div class="nation-title">
-    <img class="nation-flag" src="/flags/${n.side === "west" ? "aurelia" : "korsav"}.svg"
-         alt="Flag of ${esc(n.name)}" />
-    <h2>${esc(n.name)}</h2>
+const WEAPON_ART: Record<string, string> = {
+  narrative: '<path d="M4 6.5h16v9H9.2L5 19v-3.5H4z"/><path d="M8 10h8M8 12.5h5"/>',
+  drone_swarm: '<circle cx="12" cy="12" r="2.2"/><path d="M9.8 10.5 6 7H3.5M14.2 10.5 18 7h2.5M9.8 13.5 6 17H3.5M14.2 13.5 18 17h2.5M6 7v3M18 7v3M6 14v3M18 14v3"/>',
+  cruise_missile: '<path d="m4 15 11-7 5 1-3 4-10 5z"/><path d="m10 14-3-4 2-1.5 4 3M14.5 13.8l.5 4.2-2 .9-2.3-3.3"/>',
+  naval_barrage: '<path d="M3 17c2 0 2-1.5 4-1.5S9 17 11 17s2-1.5 4-1.5 2 1.5 4 1.5 2-1.5 3-1.5"/><path d="M6 14h12l-1.5-5H10zM12 9V5h4v4M5 12h2"/>',
+  cyber_strike: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="m8 10 2 2-2 2M12.5 14H16M12 5V3M12 21v-2M4 12H2M22 12h-2"/>',
+  nuke: '<circle cx="12" cy="12" r="2.2"/><path d="M10.4 10.5 7.2 5a8 8 0 0 1 4.8-1.6v6.4M13.6 10.5 16.8 5A8 8 0 0 1 20 9.5l-5.8 2M12 14.2v6.4A8 8 0 0 1 7.2 19l3.2-5.5"/>',
+};
+
+const weaponIcon = (id: string) => `<span class="weapon-icon" aria-hidden="true">
+  <svg viewBox="0 0 24 24">${WEAPON_ART[id] ?? WEAPON_ART.cruise_missile}</svg>
+</span>`;
+
+const readiness = (n: Nation) => {
+  const floor = Math.min(n.integrity, n.military);
+  if (floor < 30) return { label: "critical", cls: "critical" };
+  if (floor < 55) return { label: "degraded", cls: "degraded" };
+  return { label: "operational", cls: "operational" };
+};
+
+const flag = (n: Nation, setup = false) => {
+  const state = setup ? { label: "mobilizing", cls: "mobilizing" } : readiness(n);
+  return `<div class="nation-header">
+    <div class="nation-identity">
+      <img class="nation-flag" src="/flags/${n.side === "west" ? "aurelia" : "korsav"}.svg"
+           alt="Flag of ${esc(n.name)}" />
+      <div class="nation-title">
+        <span class="nation-kicker">island command</span>
+        <h2>${esc(n.name)}</h2>
+        ${commander(n)}
+      </div>
+    </div>
+    <span class="readiness ${state.cls}"><i></i>${state.label}</span>
   </div>`;
+};
 
 /**
  * Reference data that arrives once, on reset, and never changes during a match: which
@@ -120,6 +150,21 @@ const slider = (
            data-side="${side}" data-${attr}="${key}" />
   </div>`;
 
+const weaponSlider = (n: Nation, w: (typeof WEAPONS)[number]) => {
+  const value = n.arsenal?.[w.id] ?? 0;
+  const max = w.id === "nuke" ? 5 : 30;
+  return `<div class="weapon-card edit ${w.id === "nuke" ? "nuke" : ""}">
+    ${weaponIcon(w.id)}
+    <div class="weapon-meta">
+      ${paramLabel(w.label, w.id)}
+      <span class="weapon-domain">${esc(w.domain)} system</span>
+    </div>
+    <span class="weapon-count val">${value}</span>
+    <input type="range" min="0" max="${max}" value="${value}"
+           aria-label="${esc(w.label)} inventory" data-side="${n.side}" data-arm="${w.id}" />
+  </div>`;
+};
+
 /** Before the war the panel is a control surface; after it, a readout. */
 function setupPanel(n: Nation): string {
   const stats = METERS.map(([key, label]) =>
@@ -132,24 +177,21 @@ function setupPanel(n: Nation): string {
     slider(n.side, "public unrest", "field", "unrest", n.unrest, 100),
   ].join("");
 
-  const arms = WEAPONS.map((w) =>
-    slider(n.side, w.label, "arm", w.id, n.arsenal?.[w.id] ?? 0, w.id === "nuke" ? 5 : 30)
-  ).join("");
+  const arms = WEAPONS.map((w) => weaponSlider(n, w)).join("");
 
-  return `${flag(n)}
-    ${commander(n)}
+  return `${flag(n, true)}
     ${n.blurb ? `<p class="blurb">${esc(n.blurb)}</p>` : ""}
     ${n.creed ? `<p class="creed">argues from ${esc(n.creed)}</p>` : ""}
-    <div class="block"><div class="tag">opening position</div>${stats}</div>
-    <div class="block">${country}</div>
-    <div class="block"><div class="tag">arsenal${info("arsenal")}</div>${arms}</div>`;
+    <div class="block metrics-block"><div class="tag">opening position</div>${stats}</div>
+    <div class="block homefront-block">${country}</div>
+    <div class="block arsenal-block"><div class="tag">arsenal${info("arsenal")}</div>${arms}</div>`;
 }
 
 function readoutPanel(n: Nation): string {
   const meters = METERS.map(([key, label]) => {
     const v = n[key] as number;
     return `<div class="meter">
-      <label>${paramLabel(label, key as string)}<span>${v}</span></label>
+      <label>${paramLabel(label, key as string)}<span class="meter-value">${v}</span></label>
       <div class="track"><div class="fill ${v < 30 ? "low" : ""}" style="width:${v}%"></div></div>
     </div>`;
   }).join("");
@@ -159,7 +201,7 @@ function readoutPanel(n: Nation): string {
     const v = n[key] as number;
     const hot = cls !== "spin" && v >= 70 ? " hot" : "";
     return `<div class="meter">
-      <label>${paramLabel(label, key as string)}<span>${v}</span></label>
+      <label>${paramLabel(label, key as string)}<span class="meter-value">${v}</span></label>
       <div class="track"><div class="fill ${cls}${hot}" style="width:${v}%"></div></div>
     </div>`;
   }).join("");
@@ -174,8 +216,10 @@ function readoutPanel(n: Nation): string {
       const turns = n.effects?.shield?.[d] ?? 0;
       const stops = Math.round(Math.min(0.72, v / 105) * 100);
       const cover = turns > 0 ? `<span class="shield">◈ hardened ${turns}t</span>` : "";
-      return `<div class="d ${turns > 0 ? "hard" : ""}">
-        ${paramLabel(d, `defense_${d}`)}${cover}<span class="pct">stops ${stops}%</span></div>`;
+      const mark = d === "air" ? "⌃" : d === "naval" ? "≈" : "⌁";
+      return `<div class="d defense-row ${turns > 0 ? "hard" : ""}">
+        <span class="defense-name"><i>${mark}</i>${paramLabel(d, `defense_${d}`)}</span>
+        ${cover}<span class="pct">${stops}% intercept</span></div>`;
     })
     .join("");
 
@@ -197,23 +241,27 @@ function readoutPanel(n: Nation): string {
   // Rounds remaining. Spent racks stay visible but dim — running dry is information.
   const arsenal = WEAPONS.map((w) => {
     const left = n.arsenal?.[w.id] ?? 0;
-    const cls = ["w", left === 0 ? "spent" : "", w.id === "nuke" ? "nuke" : ""].join(" ");
+    const cls = ["weapon-card", left === 0 ? "spent" : "", w.id === "nuke" ? "nuke" : ""].join(" ");
     const pips = w.id === "nuke" ? "☢".repeat(left) : "▮".repeat(Math.min(left, 10));
-    return `<div class="${cls}">${paramLabel(w.label, w.id)}<span class="pips">${pips}</span><span class="n">${left}</span></div>`;
+    return `<div class="${cls}">
+      ${weaponIcon(w.id)}
+      <div class="weapon-meta">${paramLabel(w.label, w.id)}<span class="weapon-domain">${esc(w.domain)} system</span></div>
+      <span class="pips" aria-hidden="true">${pips}</span>
+      <span class="weapon-count" title="${left} remaining">${left}</span>
+    </div>`;
   }).join("");
 
   return `${flag(n)}
-    ${commander(n)}
     ${status ? `<div class="chips">${status}</div>` : ""}
     ${meters}
-    <div class="block">${pressures}</div>
-    <div class="block"><div class="tag">the dead</div>
+    <div class="block pressure-block">${pressures}</div>
+    <div class="block toll-block"><div class="tag">the dead</div>
       <div class="d toll-line">${paramLabel("civilians and service dead", "casualties")}
         <span class="n">${count(n.casualties ?? 0)}</span></div>
     </div>
-    <div class="block"><div class="tag">war funds</div>${economy}</div>
-    <div class="block"><div class="tag">air, sea and network defence${info("defenses")}</div>${defenses}</div>
-    <div class="block"><div class="tag">arsenal${info("arsenal")}</div>${arsenal}</div>`;
+    <div class="block funds-block"><div class="tag">war funds</div>${economy}</div>
+    <div class="block defense-block"><div class="tag">air, sea and network defence${info("defenses")}</div>${defenses}</div>
+    <div class="block arsenal-block"><div class="tag">arsenal${info("arsenal")}</div>${arsenal}</div>`;
 }
 
 /**
@@ -314,11 +362,20 @@ function renderTalks(state: GameState) {
 }
 
 const hideTimers: Record<string, number> = {};
+const pendingVerdicts: Partial<Record<Side, { reason: string; bad: boolean }>> = {};
+const waitingBubbles: Partial<Record<Side, boolean>> = {};
+
+/** Mark a spoken line that has been queued but has not begun playback yet. */
+export function deferBubble(side: Side) {
+  waitingBubbles[side] = true;
+}
 
 /** A side speaks. Its bubble sits over its island until the other side answers. */
 export function showBubble(
-  side: Side, name: string, detail: string, text: string, nuclear: boolean
+  side: Side, name: string, detail: string, text: string, nuclear: boolean,
+  autoHide = true,
 ) {
+  waitingBubbles[side] = false;
   for (const s of ["west", "east"] as Side[]) if (s !== side) hideBubble(s);
 
   const el = $(`bubble-${side}`);
@@ -328,17 +385,39 @@ export function showBubble(
   requestAnimationFrame(() => el.classList.add("show"));
 
   window.clearTimeout(hideTimers[side]);
-  hideTimers[side] = window.setTimeout(() => hideBubble(side), dwellMs);
+  if (autoHide) hideTimers[side] = window.setTimeout(() => hideBubble(side), dwellMs);
+
+  const pending = pendingVerdicts[side];
+  if (pending) {
+    delete pendingVerdicts[side];
+    appendVerdict(el, pending.reason, pending.bad);
+  }
 }
 
-function hideBubble(side: Side) {
+export function hideBubble(side: Side) {
+  window.clearTimeout(hideTimers[side]);
   $(`bubble-${side}`).classList.remove("show");
+}
+
+/** Audio ended or was cancelled: retire both the visible line and any queued state. */
+export function finishSpeechBubble(side: Side) {
+  waitingBubbles[side] = false;
+  delete pendingVerdicts[side];
+  hideBubble(side);
 }
 
 /** The arbiter's call appends into the bubble that is still on screen. */
 export function setVerdict(side: Side, reason: string, bad: boolean) {
+  if (!reason && !bad) return;
   const el = $(`bubble-${side}`);
-  if (!el.classList.contains("show") || (!reason && !bad)) return;
+  if (!el.classList.contains("show")) {
+    if (waitingBubbles[side]) pendingVerdicts[side] = { reason, bad };
+    return;
+  }
+  appendVerdict(el, reason, bad);
+}
+
+function appendVerdict(el: HTMLElement, reason: string, bad: boolean) {
   const line = document.createElement("div");
   line.className = `verdict ${bad ? "bad" : ""}`;
   line.textContent = bad ? `ineffective — ${reason}` : reason;
@@ -353,7 +432,11 @@ export function ticker(text: string, alarm = false) {
   hideTimers.ticker = window.setTimeout(() => el.classList.remove("show"), dwellMs);
 }
 
-export function renderEvent(ev: GameEvent, nameOf: (s: Side) => string) {
+export function renderEvent(
+  ev: GameEvent,
+  nameOf: (s: Side) => string,
+  options: { messageAutoHide?: boolean } = {},
+) {
   const p = ev.payload;
   switch (ev.type) {
     case "ignition":
@@ -374,7 +457,10 @@ export function renderEvent(ev: GameEvent, nameOf: (s: Side) => string) {
       break;
 
     case "message":
-      showBubble(p.side, p.name, detailOf(p.tool, p.args), p.text, p.args?.weapon === "nuke");
+      showBubble(
+        p.side, p.name, detailOf(p.tool, p.args), p.text,
+        p.args?.weapon === "nuke", options.messageAutoHide ?? true,
+      );
       break;
 
     case "ruling":
@@ -401,6 +487,9 @@ export function renderEvent(ev: GameEvent, nameOf: (s: Side) => string) {
 export function clearStage() {
   setupShown = false;
   for (const s of ["west", "east"] as Side[]) {
+    delete pendingVerdicts[s];
+    delete waitingBubbles[s];
+    window.clearTimeout(hideTimers[s]);
     $(`bubble-${s}`).classList.remove("show");
     $(`bubble-${s}`).innerHTML = "";
   }

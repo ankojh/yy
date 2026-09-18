@@ -50,6 +50,18 @@ class Settings:
         # The model runtime is intentionally OpenAI-only for now: there is no provider
         # switch or alternate endpoint to reactivate accidentally.
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        # Neural speech is deliberately separate from the game models: Cloudflare's
+        # Workers AI free allocation can voice the bench without spending OpenAI tokens.
+        # Both credentials remain backend-only; the browser calls our /speech proxy.
+        self.cloudflare_account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+        self.cloudflare_api_token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+        self.tts_voice_west = os.getenv("TTS_VOICE_WEST", "atlas").strip() or "atlas"
+        self.tts_voice_east = os.getenv("TTS_VOICE_EAST", "jupiter").strip() or "jupiter"
+        # Eleven v3 understands performance tags such as [angry] and [shouts]. It is
+        # preferred when configured; Aura-2 remains the provider fallback.
+        self.elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+        self.elevenlabs_voice_west = os.getenv("ELEVENLABS_VOICE_WEST", "").strip()
+        self.elevenlabs_voice_east = os.getenv("ELEVENLABS_VOICE_EAST", "").strip()
         # NATION_MODEL, if set, overrides both chairs — the escape hatch for anyone who
         # wants the old symmetric setup back, or a controlled single-model run.
         both = os.getenv("NATION_MODEL", "")
@@ -71,7 +83,7 @@ class Settings:
         # the statement goes up, the ordnance flies, the damage lands, and the bubble
         # stays readable for the whole of it. The frontend is told this number so its
         # tooltips live exactly as long as the beat they belong to.
-        self.reveal = float(os.getenv("REVEAL", "10.0"))   # seconds per declared action
+        self.reveal = float(os.getenv("REVEAL", "18.0"))   # seconds per declared action
         self.beat = float(os.getenv("BEAT", "0.6"))        # short punctuation pauses
         self.turn_pause = float(os.getenv("TURN_PAUSE", "4.0"))  # between turns
         self.log_dir = Path(os.getenv("LOG_DIR", Path(__file__).resolve().parent.parent / "logs"))
@@ -107,6 +119,16 @@ class Settings:
     def use_mock(self) -> bool:
         """Without an OpenAI key, fall back to the scripted policy instead of calling."""
         return self._force_mock or not self.openai_api_key
+
+    @property
+    def use_neural_tts(self) -> bool:
+        eleven = bool(
+            self.elevenlabs_api_key
+            and self.elevenlabs_voice_west
+            and self.elevenlabs_voice_east
+        )
+        cloudflare = bool(self.cloudflare_account_id and self.cloudflare_api_token)
+        return eleven or cloudflare
 
 
 settings = Settings()

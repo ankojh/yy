@@ -337,7 +337,10 @@ MESSAGE = {
     "type": "string",
     "description": (
         "What you say aloud this turn, shown to the world and to your enemy. "
-        "ONE short sentence, 18 words maximum. Terse and in character. No preamble."
+        "Two or three compact sentences, 32–46 words total. Direct, hostile, and specific: "
+        "name the provocation, declare the move, and end with a consequence or warning. "
+        "Use hard verbs and active voice. No preamble, hedging, generic slogans, mechanics, "
+        "or threats the chosen action cannot support."
     ),
 }
 

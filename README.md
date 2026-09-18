@@ -289,6 +289,24 @@ In development, enable **dev view** in the header to inspect each chair's live s
 instructions, current-state brief, available tools, response, latency, usage, and errors.
 The stream is opt-in, never enters match recordings, and is unavailable in production.
 
+The header's **sound** control plays a recorded 2:51 military/covert-ops score that builds
+from dark suspense into hard combat intensity. The bundled track has no runtime API,
+network, or generation cost. It loops from briefing through the end state and immediately
+pauses whenever the tab or browser window loses focus. “Imminent Threat” by Matthew Pablo
+is used under CC BY-SA 3.0; full asset details are in `web/public/audio/LICENSE.md`.
+
+Commander statements prefer ElevenLabs v3, where `[angry] [shouts]` directs an aggressive
+performance. Cloudflare Aura-2 is the second provider. Both hosted providers are optional,
+backend-only, and separately cached; neither uses OpenAI tokens. If neither is configured,
+speech stays silent rather than falling back to a robotic platform voice. Audio starts only
+after user interaction. Live statements drain through a single-speaker queue at 1.25× so one
+island never cuts off the other. Its bubble, launch animation, and launch cue all begin on the
+audio `play` event; the bubble retires on `ended`, keeping the entire action reveal behind the
+commander whose turn it is even when synthesis or the queue adds a delay. Every strike has its
+own launch signature and a flight-timed impact or interception cue on a dedicated effects bus.
+The score briefly ducks under those cues, then returns at full level. Speech is suppressed while
+scrubbing or accelerating a replay so the bench does not become a queue of stale voices.
+
 Balance work runs in a batch:
 
 ```bash
@@ -360,6 +378,13 @@ list above — the price of a bench made of one real war instead of five picked 
 |---|---|---|
 | `APP_ENV` | `development` | controls development diagnostics defaults |
 | `OPENAI_API_KEY` | — | required for live model calls; absent ⇒ mock mode |
+| `ELEVENLABS_API_KEY` | — | optional preferred neural TTS; free plan includes limited characters |
+| `ELEVENLABS_VOICE_WEST` | — | ElevenLabs voice ID for Aurelia |
+| `ELEVENLABS_VOICE_EAST` | — | ElevenLabs voice ID for Korsav |
+| `CLOUDFLARE_ACCOUNT_ID` | — | optional Workers AI Aura-2 fallback |
+| `CLOUDFLARE_API_TOKEN` | — | backend-only Workers AI token |
+| `TTS_VOICE_WEST` | `atlas` | Aura-2 fallback voice for Aurelia |
+| `TTS_VOICE_EAST` | `jupiter` | Aura-2 fallback voice for Korsav |
 | `WEST_MODEL` | `gpt-5-nano` | Aurelia's chair |
 | `EAST_MODEL` | `gpt-4.1-nano` | Korsav's chair |
 | `ARBITER_MODEL` | `gpt-5-nano` | the referee |
@@ -367,7 +392,7 @@ list above — the price of a bench made of one real war instead of five picked 
 | `SWAP_MODELS` | — | `1` reverses which model commands which island |
 | `MAX_TURNS` | `12` | |
 | `RESPONSE_CHAIN_TURNS` | `4` | hosted decisions retained per island before a fresh canonical brief starts a new chain |
-| `REVEAL` | `10.0` | seconds one declared action owns the stage |
+| `REVEAL` | `18.0` | seconds one declared action owns the stage |
 | `TURN_PAUSE` | `4.0` | seconds between turns |
 | `BEAT` | `0.6` | short punctuation pauses |
 | `LLM_DEBUG` | on in development, off in production | writes raw model I/O to `logs/match-…-llm.jsonl` |
@@ -376,7 +401,7 @@ list above — the price of a bench made of one real war instead of five picked 
 | `REPLAY_SPEED` | `1` | playback rate; `?replay=` and `?speed=` on the page URL win |
 | `FIXTURES` | `backend/fixtures` | where recordings are looked up |
 
-`REVEAL` is the pacing knob that matters. One action gets ten seconds: the statement goes
+`REVEAL` is the pacing knob that matters. One action gets eighteen seconds: the statement goes
 up, the ordnance flies, the damage lands, and the bubble stays readable for all of it. The
 server sends the number to the frontend on reset, so tooltips live exactly as long as the
 beat they belong to rather than keeping a second, quietly diverging copy of it.
@@ -385,8 +410,10 @@ Port 8077 rather than 8000 because another local project already holds 8000. Ove
 frontend with `VITE_API_PORT`.
 
 Every live match also writes `logs/match-…-usage.jsonl`, containing only per-call input,
-cached-input, output and total token counts plus chain position. It never contains prompts
-or model output, so token and cache efficiency can be measured with `LLM_DEBUG=0`.
+uncached, cached, cache-write, output, reasoning and total token counts; cache-hit rate;
+chain position; and context-window utilization and headroom for known models. It never
+contains prompts or model output, so token and cache efficiency can be measured with
+`LLM_DEBUG=0`.
 
 ## Layout
 
@@ -399,11 +426,13 @@ backend/app/
   agents.py    two commanders + the arbiter, each with a scripted fallback
   game.py      ignition dossiers, paced turn loop, event stream
   replay.py    the bench — recordings, turn cuts, jumps, reconstructed pacing
+  speech.py    cached ElevenLabs v3 / Cloudflare Aura-2 commander speech
   main.py      FastAPI websocket
 backend/fixtures/   five recorded matches, committed; see "The bench"
 web/src/
   terrain.ts   island generation: relief, rivers, forest, farmland, roads, cities, airbase, port
   canvas.ts    the theatre — cached terrain, site-targeted ordnance, interception, fires, smoke
+  audio.ts     recorded score, neural speech playback, focus lifecycle, and weapon cues
   ui.ts        one render case per event type, plus the files and the negotiating board
   main.ts      websocket + dispatch
 ```

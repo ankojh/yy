@@ -208,8 +208,28 @@ function digestFor(trace: DevTrace): string {
       ?? "Response received · open for details";
   }
   if (trace.direction === "usage") {
+    const inputTokens = Number(trace.input_tokens ?? 0);
     const cached = Number(trace.cached_input_tokens ?? 0);
-    return `${compactNumber(trace.input_tokens)} input · ${compactNumber(trace.output_tokens)} output${cached ? ` · ${compactNumber(cached)} cached` : ""}`;
+    const uncached = Number(trace.uncached_input_tokens ??
+      Math.max(0, inputTokens - cached));
+    const cacheWrite = Number(trace.cache_write_tokens ?? 0);
+    const cacheHit = Number(trace.cache_hit_percent ??
+      (inputTokens ? cached * 100 / inputTokens : 0));
+    const reasoning = Number(trace.reasoning_tokens ?? 0);
+    const utilization = Number(trace.context_utilization_percent ?? 0);
+    const contextWindow = Number(trace.context_window_tokens ?? 0);
+    const remaining = Number(trace.remaining_context_tokens ?? 0);
+    const input = `${compactNumber(inputTokens)} input` +
+      ` · ${compactNumber(uncached)} uncached` +
+      ` · ${compactNumber(cached)} cached (${cacheHit.toFixed(1)}%)` +
+      (cacheWrite ? ` · ${compactNumber(cacheWrite)} cache write` : "");
+    const output = `${compactNumber(trace.output_tokens)} output` +
+      (reasoning ? ` · ${compactNumber(reasoning)} reasoning` : "");
+    const context = trace.context_window_tokens == null
+      ? ""
+      : ` · ${utilization.toFixed(2)}% of ${compactNumber(contextWindow)} context` +
+        ` · ${compactNumber(remaining)} free`;
+    return `${input} · ${output}${context}`;
   }
   if (trace.direction === "error") {
     const content = isRecord(trace.content) ? trace.content : {};

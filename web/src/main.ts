@@ -1,13 +1,16 @@
 import { WarMap } from "./canvas";
+import { warAudio } from "./audio";
 import { configureDevView, handleDevStatus, initDevView, pushDevTrace } from "./dev";
 import {
-  $, clearStage, openQuarrel, renderEvent, renderReplay, renderState,
+  $, clearStage, deferBubble, finishSpeechBubble, openQuarrel, renderEvent, renderReplay,
+  renderState,
   setDwell, setReference,
 } from "./ui";
 import type { ReplayBlock } from "./ui";
 import type { GameEvent, GameState, Side } from "./types";
 
 const API_PORT = import.meta.env.VITE_API_PORT ?? "8077";
+const API_ORIGIN = `${location.protocol}//${location.hostname}:${API_PORT}`;
 // The query string is forwarded verbatim, so `?replay=accord&speed=4` on the page opens
 // a socket onto that recording. One server can serve a live tab and three bench tabs.
 const WS_URL = `ws://${location.hostname}:${API_PORT}/ws${location.search}`;
@@ -54,6 +57,7 @@ function send(command: string, extra: Record<string, unknown> = {}) {
 function setWarHeld(held: boolean) {
   warHeld = held;
   $("btn-hold").textContent = held ? "resume war" : "hold war";
+  warAudio.setWarActive(Boolean(state));
 }
 
 function renderCrisisDescription() {
@@ -134,6 +138,7 @@ function connect() {
     }
 
     if (ev.type === "reset") {
+      warAudio.reset();
       clearStage();
       map.clear();
       state = null;
@@ -166,6 +171,7 @@ function connect() {
 
     if (ev.type === "state") {
       state = ev.payload.state as GameState;
+      warAudio.setWarActive(true);
       renderState(state);
       map.setState(state);
       renderCrisisOptions();
@@ -183,22 +189,60 @@ function connect() {
     // has already decided how many rounds the defender's batteries kill, and it is
     // passed straight through — the renderer never rolls for interception itself, so
     // what dies on screen is what died in the arithmetic.
-    if (ev.type === "message" && ev.payload.tool === "strike") {
+    let speechOwnsBubble = false;
+    let strikeStarted = false;
+    const startStrike = () => {
+      if (strikeStarted || ev.type !== "message" || ev.payload.tool !== "strike") return;
+      strikeStarted = true;
       map.fire(
         ev.payload.side as Side,
         ev.payload.args?.weapon ?? "drone_swarm",
         ev.payload.args?.target ?? "military",
         Number(ev.payload.shot?.stopped ?? 0),
+        false,
+      );
+    };
+    if (ev.type === "message" && !scrubbing) {
+      const replaySpeed = replay?.speed ?? 1;
+      speechOwnsBubble = warAudio.handleMessage(ev, {
+        effects: !replay || replaySpeed <= 2,
+        speak: !replay || replaySpeed <= 1,
+        onSpeechStart: () => {
+          startStrike();
+          renderEvent(ev, nameOf, { messageAutoHide: false });
+        },
+        onSpeechEnd: () => finishSpeechBubble(ev.payload.side as Side),
+        // If a provider fails, retain the old readable-text behavior instead of making
+        // the command disappear merely because it could not be voiced.
+        onSpeechUnavailable: () => {
+          startStrike();
+          renderEvent(ev, nameOf);
+        },
+      });
+      if (speechOwnsBubble) deferBubble(ev.payload.side as Side);
+    }
+
+    if (ev.type === "message" && ev.payload.tool === "strike") {
+      if (scrubbing) {
         // Jumping past a salvo still has to leave its crater behind: the burn marks on
         // the map live in the renderer, not in the state, so the round has to land.
-        scrubbing
-      );
+        map.fire(
+          ev.payload.side as Side,
+          ev.payload.args?.weapon ?? "drone_swarm",
+          ev.payload.args?.target ?? "military",
+          Number(ev.payload.shot?.stopped ?? 0),
+          true,
+        );
+      } else if (!speechOwnsBubble) {
+        startStrike();
+      }
     }
 
     // Everything `renderEvent` draws for these two is transient and belongs to the
     // moment it happened, not to the turn being jumped to. The ticker lines are not,
     // and are replayed, so a jump lands with the last bulletin still on screen.
     if (scrubbing && TRANSIENT.has(ev.type)) return;
+    if (speechOwnsBubble) return;
 
     renderEvent(ev, nameOf);
   };
@@ -355,4 +399,5 @@ $<HTMLSelectElement>("replay-speed").onchange = (e) => {
 };
 
 initDevView(send);
+warAudio.init($<HTMLButtonElement>("btn-sound"), API_ORIGIN);
 connect();
