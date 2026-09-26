@@ -301,15 +301,16 @@ is used under CC BY-SA 3.0; full asset details are in `web/public/audio/LICENSE.
 
 Commander statements prefer ElevenLabs v3, where `[angry] [shouts]` directs an aggressive
 performance. Cloudflare Aura-2 is the second provider. Both hosted providers are optional,
-backend-only, and separately cached; neither uses OpenAI tokens. If neither is configured,
-speech stays silent rather than falling back to a robotic platform voice. Audio starts only
-after user interaction. Live statements drain through a single-speaker queue at 1.25× so one
-island never cuts off the other. Its bubble, launch animation, and launch cue all begin on the
-audio `play` event; the bubble retires on `ended`, keeping the entire action reveal behind the
-commander whose turn it is even when synthesis or the queue adds a delay. Every strike has its
-own launch signature and a flight-timed impact or interception cue on a dedicated effects bus.
-The score briefly ducks under those cues, then returns at full level. Speech is suppressed while
-scrubbing or accelerating a replay so the bench does not become a queue of stale voices.
+backend-only, and separately cached; neither uses OpenAI tokens. If a hosted provider is
+unconfigured, unavailable, or out of quota, the same queue falls back to browser speech so
+the second island never loses its turn. Audio starts only after user interaction. Live
+statements drain through a single-speaker queue at 1.25× so one island never cuts off the
+other. Its bubble, launch animation, and launch cue all begin on the audio `play` event; the
+bubble retires on `ended`, keeping the entire action reveal behind the commander whose turn it
+is even when synthesis or the queue adds a delay. Every strike has its own launch signature
+and a flight-timed impact or interception cue on a dedicated effects bus. The score briefly
+ducks under those cues, then returns at full level. Speech is suppressed while scrubbing or
+accelerating a replay so the bench does not become a queue of stale voices.
 
 Balance work runs in a batch:
 

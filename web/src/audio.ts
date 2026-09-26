@@ -51,6 +51,7 @@ class WarAudio {
   private weaponDucked = false;
   private weaponDuckTimer: number | null = null;
   private speech: HTMLAudioElement | null = null;
+  private localSpeech: SpeechSynthesisUtterance | null = null;
   private speechAbort: AbortController | null = null;
   private speechGeneration = 0;
   private speechQueue: SpeechLine[] = [];
@@ -371,12 +372,69 @@ class WarAudio {
       if (generation === this.speechGeneration) this.duck(false);
     } catch (error) {
       if ((error as DOMException).name === "AbortError") return;
-      // An unavailable neural provider is intentionally silent. The platform speech
-      // fallback was removed because its robotic output is worse than keeping the text.
-      if (generation === this.speechGeneration) line.onUnavailable();
+      // Quotas and transient provider errors should not break the west→east handoff.
+      // Keep the same serialized queue and lifecycle hooks with the browser voice.
+      const handled = await this.speakLocally(line, generation);
+      if (!handled && generation === this.speechGeneration) line.onUnavailable();
     } finally {
       if (generation === this.speechGeneration) this.speechAbort = null;
     }
+  }
+
+  private async speakLocally(line: SpeechLine, generation: number): Promise<boolean> {
+    if (
+      typeof window.speechSynthesis === "undefined"
+      || typeof SpeechSynthesisUtterance === "undefined"
+      || generation !== this.speechGeneration
+      || !this.pageAudible()
+    ) return false;
+
+    const synthesis = window.speechSynthesis;
+    const utterance = new SpeechSynthesisUtterance(line.text);
+    const voices = synthesis.getVoices().filter((voice) =>
+      voice.lang.toLowerCase().startsWith("en")
+    );
+    if (voices.length) {
+      utterance.voice = voices[line.side === "west" ? 0 : Math.min(1, voices.length - 1)];
+    }
+    utterance.rate = SPEECH_RATE;
+    utterance.pitch = line.side === "west" ? 0.92 : 0.78;
+    utterance.volume = 1;
+    this.localSpeech = utterance;
+
+    await new Promise<void>((resolve) => {
+      let done = false;
+      let started = false;
+      const finished = (unavailable = false) => {
+        if (done) return;
+        done = true;
+        if (this.localSpeech === utterance) {
+          this.localSpeech = null;
+          this.speechFinish = null;
+        }
+        if (started) line.onEnd();
+        else if (unavailable) line.onUnavailable();
+        resolve();
+      };
+      utterance.onstart = () => {
+        if (generation !== this.speechGeneration) return;
+        started = true;
+        line.onStart();
+        this.duck(true);
+        this.commandCue(line.side);
+      };
+      utterance.onend = () => finished(false);
+      utterance.onerror = () => finished(true);
+      this.speechFinish = () => finished(false);
+      try {
+        synthesis.resume();
+        synthesis.speak(utterance);
+      } catch {
+        finished(true);
+      }
+    });
+    if (generation === this.speechGeneration) this.duck(false);
+    return true;
   }
 
   private cacheSpeech(key: string, url: string) {
@@ -403,8 +461,13 @@ class WarAudio {
       this.speech.currentTime = 0;
       this.speech = null;
     }
+    const localSpeech = this.localSpeech;
     this.speechFinish?.();
     this.speechFinish = null;
+    if (localSpeech) {
+      window.speechSynthesis.cancel();
+      this.localSpeech = null;
+    }
     this.duck(false);
   }
 
