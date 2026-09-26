@@ -398,14 +398,18 @@ COUNCIL_NUDGES = [
 
 
 _DEV_SECRET_KEYS = {
-    "authorization", "api_key", "openai_api_key", "cookie", "set-cookie"
+    "authorization", "api_key", "openai_api_key", "typesafe_api_key",
+    "cookie", "set-cookie",
 }
 
 
 def _sanitize_dev_trace(value: Any) -> Any:
     """Defense in depth before private diagnostics cross the development socket."""
-    if isinstance(value, str) and settings.openai_api_key:
-        return value.replace(settings.openai_api_key, "[redacted]")
+    if isinstance(value, str):
+        for secret in (settings.openai_api_key, settings.typesafe_api_key):
+            if secret:
+                value = value.replace(secret, "[redacted]")
+        return value
     if isinstance(value, dict):
         return {
             str(key): "[redacted]" if str(key).lower() in _DEV_SECRET_KEYS
@@ -448,14 +452,17 @@ def reset_payload() -> Dict[str, Any]:
             for key, action in SUPPORT_ACTIONS.items()
         ],
         "mock": settings.use_mock,
+        "decision_mock": settings.use_mock_decisions,
+        "dialogue_mock": settings.use_mock_dialogue,
+        "arbiter_mock": settings.use_mock_arbiter,
         # Raw prompts are available only on an explicitly enabled local development
         # connection. Production never advertises or streams this capability.
         "dev_view_available": settings.app_env != "production" and settings.llm_debug,
-        "llm_provider": "openai",
+        "llm_provider": "openai + typesafe",
         "max_turns": settings.max_turns,
         "balance_version": BALANCE_VERSION,
-        # Who is sitting in which chair. Never hidden: a match between two different
-        # models is only interesting if you can see which was which.
+        # Dialogue voices and the typed referee. Strategic provenance is also emitted
+        # on every decision event.
         "panel": settings.panel,
         # The sixty-one-year-old quarrel, for the briefing.
         "partition": PARTITION,
@@ -488,13 +495,6 @@ class Game:
             agents.seed(seed)
         self._emit = emit
         self._file: Optional[MatchLog] = None
-        # The hosted Responses API remembers a few turns for each commander. These
-        # sessions belong to this match so neither island nor another websocket can
-        # inherit the other side's private chain.
-        self._agent_sessions = {
-            "west": agents.ResponseSession(),
-            "east": agents.ResponseSession(),
-        }
         self._dev_view = False
         self._trace_started: Dict[str, float] = {}
         self._trace_sequence = 0
@@ -525,20 +525,22 @@ class Game:
 
         direction = str(payload.get("direction") or "")
         agent = str(payload.get("agent") or "unknown")
+        stage = str(payload.get("stage") or "request")
+        timing_key = f"{agent}:{stage}"
         now = time.perf_counter()
         if direction == "sent":
-            self._trace_started[agent] = now
-        started = self._trace_started.get(agent)
+            self._trace_started[timing_key] = now
+        started = self._trace_started.get(timing_key)
         elapsed_ms = round((now - started) * 1000) if started is not None else None
         if direction in ("received", "error"):
-            self._trace_started.pop(agent, None)
+            self._trace_started.pop(timing_key, None)
 
         self._trace_sequence += 1
         trace = _sanitize_dev_trace(payload)
         trace.update(
             {
                 "sequence": self._trace_sequence,
-                "provider": "openai",
+                "provider": str(payload.get("provider") or "openai"),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "elapsed_ms": elapsed_ms,
             }
@@ -559,7 +561,7 @@ class Game:
                     self.state,
                     available=available,
                     enabled=self._dev_view,
-                    provider="openai",
+                    provider="openai + typesafe",
                     panel=settings.panel,
                 )
             )
@@ -580,8 +582,6 @@ class Game:
             self._file = None
         self.state = initial_state()
         self.log = []
-        for session in self._agent_sessions.values():
-            session.reset()
         await self.emit("reset", **reset_payload())
         await self.emit_state()
 
@@ -634,14 +634,23 @@ class Game:
                 settings.log_dir,
                 meta={
                     "balance_version": BALANCE_VERSION,
-                    # Three chairs, three models. A transcript that does not say which
-                    # model played which country cannot be read for anything at all.
+                    # Jev owns strategic choices; the island models are dialogue voices.
                     "west_model": settings.panel["west"],
                     "east_model": settings.panel["east"],
+                    "west_dialogue_model": settings.panel["west"],
+                    "east_dialogue_model": settings.panel["east"],
+                    "decision_model": (
+                        "mock" if settings.use_mock_decisions else settings.jev_model
+                    ),
                     "arbiter_model": settings.panel["arbiter"],
-                    "llm_api": "responses",
-                    "response_chain_turns": settings.response_chain_turns,
+                    "commander_api": "systemone",
+                    "decision_api": "systemone",
+                    "dialogue_api": "responses",
+                    "arbiter_api": "systemone",
                     "mock": settings.use_mock,
+                    "decision_mock": settings.use_mock_decisions,
+                    "dialogue_mock": settings.use_mock_dialogue,
+                    "arbiter_mock": settings.use_mock_arbiter,
                     "max_turns": settings.max_turns,
                     "seed": self.seed,
                 },
@@ -684,7 +693,7 @@ class Game:
         await self.emit_state()
 
     async def inject(self, text: str) -> None:
-        """Add context to a live war. Both commanders see the nudge next turn."""
+        """Add context to a live war. Both island decision calls see it next turn."""
         if self.state.world.phase != "conflict":
             return
         nudge = text.strip()[:500] or self._rng.choice(COUNCIL_NUDGES)
@@ -873,10 +882,10 @@ class Game:
                 self.record_llm_trace if self._file or self._dev_view else None
             )
             try:
-                # Both commanders decide simultaneously — neither sees the other's move.
+                # Both islands decide simultaneously — neither sees the other's move.
                 west, east = await asyncio.gather(
-                    agents.decide(self.state, "west", self._agent_sessions["west"]),
-                    agents.decide(self.state, "east", self._agent_sessions["east"]),
+                    agents.decide(self.state, "west"),
+                    agents.decide(self.state, "east"),
                 )
                 actions: List[Action] = [west, east]
 
@@ -901,6 +910,8 @@ class Game:
                     side=action.side,
                     source=action.source,
                     model=action.model,
+                    dialogue_model=action.dialogue_model,
+                    decision_confidence=action.decision_confidence,
                     intent=action.intent,
                     legal=action.legal,
                     strike_streak=self.state.nation(action.side).strike_streak,

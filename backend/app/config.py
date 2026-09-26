@@ -12,28 +12,12 @@ BALANCE_VERSION = "2026.08.23-b5-intelligence"
 
 # --------------------------------------------------------------------------- the panel
 #
-# Three different models, one per chair. One model playing both nations and then also
-# judging itself is not a war, it is a model talking to itself: the same priors read the
-# same brief, reach for the same tool, and then rule that reaching for it was reasonable.
-# Whatever came out of that was a property of the model, not of the balance.
-#
-# The constraint is that they have to be *interchangeable in price*, or the experiment
-# stops being about the models and starts being about who paid more. All three sit in the
-# same tier — cents per million tokens, function calling, JSON mode:
-#
-#   gpt-5-nano     $0.05 / $0.40  per 1M in/out
-#   gpt-4.1-nano   $0.10 / $0.40
-#
-# The part that has to be separated is the two *commanders*: one model reading both
-# briefs reaches for the same tool twice and the war stops having two sides. The arbiter
-# repeating a family is a much smaller effect and not worth paying triple for, so it
-# takes the cheapest seat. It does mean the referee shares a family with Aurelia's
-# chair — `SWAP_MODELS=1` moves that model to Korsav's chair, so a paired run scores
-# both arrangements and whatever the shared family is worth cancels out between them.
+# Jev makes every strategic decision. The two OpenAI models are contrasting public
+# voices only: neither receives tools or authority to alter Jev's locked action.
 DEFAULT_PANEL = {
     "west": "gpt-5-nano",
     "east": "gpt-4.1-nano",
-    "arbiter": "gpt-5-nano",
+    "arbiter": "jev-latest",
 }
 
 class Settings:
@@ -47,9 +31,10 @@ class Settings:
         debug_default = self.app_env != "production"
         debug_value = os.getenv("LLM_DEBUG", "1" if debug_default else "0").lower()
         self.llm_debug = debug_value in ("1", "true", "yes")
-        # The model runtime is intentionally OpenAI-only for now: there is no provider
-        # switch or alternate endpoint to reactivate accidentally.
+        # Jev chooses island actions and adjudicates them. OpenAI only writes the public
+        # declarations. Both keys stay backend-only; either lane falls back independently.
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        self.typesafe_api_key = os.getenv("TYPESAFE_API_KEY", "").strip()
         # Neural speech is deliberately separate from the game models: Cloudflare's
         # Workers AI free allocation can voice the bench without spending OpenAI tokens.
         # Both credentials remain backend-only; the browser calls our /speech proxy.
@@ -62,21 +47,14 @@ class Settings:
         self.elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
         self.elevenlabs_voice_west = os.getenv("ELEVENLABS_VOICE_WEST", "").strip()
         self.elevenlabs_voice_east = os.getenv("ELEVENLABS_VOICE_EAST", "").strip()
-        # NATION_MODEL, if set, overrides both chairs — the escape hatch for anyone who
-        # wants the old symmetric setup back, or a controlled single-model run.
+        # NATION_MODEL, if set, gives both islands the same dialogue voice.
         both = os.getenv("NATION_MODEL", "")
         self.west_model = os.getenv("WEST_MODEL", both or DEFAULT_PANEL["west"])
         self.east_model = os.getenv("EAST_MODEL", both or DEFAULT_PANEL["east"])
-        self.arbiter_model = os.getenv("ARBITER_MODEL", DEFAULT_PANEL["arbiter"])
-        # Which model sits in which chair is itself a bias: leave it fixed and one model
-        # is permanently the rich republic. Flip it and the pairing reverses, so a run of
-        # matches can be scored both ways round.
+        self.jev_model = os.getenv("JEV_MODEL", DEFAULT_PANEL["arbiter"])
+        # Flip which public voice speaks for each island without changing Jev's decisions.
         self.swap_models = os.getenv("SWAP_MODELS", "").lower() in ("1", "true", "yes")
         self.max_turns = int(os.getenv("MAX_TURNS", "12"))
-        # Hosted commanders keep a little conversational continuity without dragging a
-        # twelve-turn transcript through every request. After this many successful turns
-        # the next request begins a fresh Responses chain from the canonical state brief.
-        self.response_chain_turns = max(1, int(os.getenv("RESPONSE_CHAIN_TURNS", "4")))
         # Pacing. The loop resolves far faster than anyone can read, and the interesting
         # part of a turn is watching one side's move land before the other answers.
         # `reveal` is how long a single declared action owns the stage, start to finish:
@@ -99,8 +77,8 @@ class Settings:
         )
 
     def model_for(self, side: str) -> str:
-        """Which model commands this island. `mock` when nothing is being spent."""
-        if self.use_mock:
+        """Which OpenAI model voices this island after Jev locks its decision."""
+        if self.use_mock_dialogue:
             return "mock"
         if self.swap_models:
             side = "east" if side == "west" else "west"
@@ -108,17 +86,36 @@ class Settings:
 
     @property
     def panel(self) -> dict:
-        """The three chairs, for the match log and the UI. Never a secret."""
+        """The two dialogue voices and typed referee, for logs and the UI."""
         return {
             "west": self.model_for("west"),
             "east": self.model_for("east"),
-            "arbiter": "mock" if self.use_mock else self.arbiter_model,
+            "arbiter": "mock" if self.use_mock_arbiter else self.jev_model,
         }
 
     @property
     def use_mock(self) -> bool:
-        """Without an OpenAI key, fall back to the scripted policy instead of calling."""
+        """True when neither hosted decision nor dialogue generation can run."""
+        return self._force_mock or (not self.openai_api_key and not self.typesafe_api_key)
+
+    @property
+    def force_mock(self) -> bool:
+        return self._force_mock
+
+    @property
+    def use_mock_decisions(self) -> bool:
+        """Without TypeSafe, island actions fall back to the scripted policy."""
+        return self._force_mock or not self.typesafe_api_key
+
+    @property
+    def use_mock_dialogue(self) -> bool:
+        """Without OpenAI, locked actions receive deterministic declarations."""
         return self._force_mock or not self.openai_api_key
+
+    @property
+    def use_mock_arbiter(self) -> bool:
+        """Without a TypeSafe key, the referee uses its bounded local fallback."""
+        return self._force_mock or not self.typesafe_api_key
 
     @property
     def use_neural_tts(self) -> bool:

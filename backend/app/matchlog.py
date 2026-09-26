@@ -96,6 +96,10 @@ class MatchLog:
             if p.get("model"):
                 bits.append(f" {p['model']}")
             bits.append("]")
+            if p.get("dialogue_model"):
+                bits.append(f" voice={p['dialogue_model']}")
+            if p.get("decision_confidence"):
+                bits.append(f" confidence={p['decision_confidence']:.2f}")
             if p.get("intent"):
                 bits.append(f" intent={p['intent']}")
             if p.get("strike_streak"):
@@ -152,7 +156,7 @@ class MatchLog:
         if not self._usage:
             return
         allowed = {
-            "agent", "direction", "model", "turn", "api", "stateless",
+            "agent", "direction", "model", "provider", "turn", "api", "stage", "stateless",
             "chain_position", "chain_reset", "input_tokens", "cached_input_tokens",
             "cache_write_tokens", "uncached_input_tokens", "cache_hit_percent",
             "output_tokens", "reasoning_tokens", "total_tokens",

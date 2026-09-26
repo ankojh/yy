@@ -1,15 +1,15 @@
-"""The three agents: one commander per nation, plus the arbiter that resolves the turn.
+"""Private Jev island decisions, OpenAI dialogue, and the Jev turn Arbiter.
 
-Every agent degrades to a scripted policy on error or with no API key, so the whole loop
-runs offline. That keeps the UI workable before you spend a cent.
+Each provider lane degrades independently to bounded local behavior, so the whole loop
+runs offline and a prose failure can never change a locked game action.
 """
 
 import json
 import random
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from . import jev
 from .config import settings
 from .engine import (
     TALKS_DEADLOCK_LIMIT,
@@ -23,7 +23,6 @@ from .tools import (
     INTEL_EXACT_THRESHOLD,
     INVESTMENTS,
     STRIKE_STREAK_LIMIT,
-    RESPONSE_DECISION_TOOL,
     TOOL_META,
     TOOL_TRADEOFFS,
     WEAPONS,
@@ -45,34 +44,6 @@ _rng = random.Random()
 # tasks created with asyncio.gather.
 TraceSink = Callable[[Dict[str, Any]], Awaitable[None]]
 _trace_sink: ContextVar[Optional[TraceSink]] = ContextVar("llm_trace_sink", default=None)
-
-
-@dataclass
-class ResponseSession:
-    """One commander's short, match-local Responses chain.
-
-    A session is owned by a `Game`, never by this module. That keeps simultaneous
-    websocket matches and the two opposing commanders from sharing private context.
-    """
-
-    previous_response_id: Optional[str] = None
-    previous_call_id: Optional[str] = None
-    turns: int = 0
-
-    def prepare(self, limit: int) -> Optional[str]:
-        if self.turns >= limit:
-            self.reset()
-        return self.previous_response_id
-
-    def remember(self, response_id: str, call_id: str) -> None:
-        self.previous_response_id = response_id
-        self.previous_call_id = call_id
-        self.turns += 1
-
-    def reset(self) -> None:
-        self.previous_response_id = None
-        self.previous_call_id = None
-        self.turns = 0
 
 
 def bind_trace(sink: Optional[TraceSink]) -> Token:
@@ -146,16 +117,6 @@ DOCTRINE = {
     ),
 }
 
-
-def system_prompt(side: str) -> str:
-    """Who you are, what you are fighting about, how you talk, and how you decide."""
-    return "\n\n".join([
-        DOCTRINE[side],
-        doctrine_for(side),   # the sixty-one-year-old quarrel, from this capital's chair
-        TERMS,
-        VOICE,
-        COMMAND_DOCTRINE,
-    ])
 
 VOICE = (
     "Speak in two or three compact sentences, 32–46 words total. Sound like a wartime "
@@ -503,56 +464,6 @@ def _brief(state: GameState, side: str, legal: List[str]) -> str:
             "your_danger": _warnings(me, state),
             "tools_you_may_use_this_turn": legal,
             "what_each_legal_option_costs_now": _option_block(state, side, legal),
-        },
-        indent=2,
-    )
-
-
-def _continuation_brief(state: GameState, side: str, legal: List[str]) -> str:
-    """Canonical current state plus only the public record added since the last turn.
-
-    The opening request in a short Responses chain receives `_brief`; subsequent requests
-    already have that explanation in context. Repeating it would pay for old prose twice
-    while making the current facts harder to find.
-    """
-    me = state.nation(side)
-    foe = state.foe(side)
-    world = state.world
-    return json.dumps(
-        {
-            "turn": world.turn,
-            "turns_remaining": settings.max_turns - world.turn,
-            "authoritative_current_state": {
-                "military": me.military,
-                "infrastructure": me.integrity,
-                "intelligence": me.intelligence,
-                "treasury_usd_billions": me.budget,
-                "international_pressure": me.intl_pressure,
-                "public_unrest": me.unrest,
-                "casualties": me.casualties,
-                "defenses": me.defenses,
-                "arsenal_rounds_left": me.arsenal,
-                "active_effects": me.effects.summary(),
-                "strike_fatigue": _fatigue_block(me),
-                "cooldowns": me.cooldowns,
-            },
-            "enemy_intelligence_now": _enemy_intelligence(state, side),
-            "new_public_record": _war_log(state, side, limit=2),
-            "latest_world_and_council_context": {
-                "tension": world.tension,
-                "council_funds_remaining_usd_billions": world.council_budget,
-                "latest_support": world.council_history[-1:],
-                "latest_grievances": world.grievances[-3:],
-            },
-            "the_dead": _toll_block(state, side),
-            "the_negotiating_table": _talks_block(state, side),
-            "your_danger": _warnings(me, state),
-            "tools_you_may_use_this_turn": legal,
-            "what_each_legal_option_costs_now": _option_block(state, side, legal),
-            "instruction": (
-                "Treat this current state as authoritative when it differs from anything "
-                "remembered earlier in the response chain. Choose one legal action."
-            ),
         },
         indent=2,
     )
@@ -1064,15 +975,11 @@ COMMAND_DOCTRINE = (
 )
 
 
-# Kept outside the per-turn state on purpose. The default commander models only support
-# implicit prompt caching and need a long identical prefix before changing state. This
-# reference is sent once at the start of a short Responses chain, retained through
-# `previous_response_id`, and sent again ahead of the dynamic brief when a chain resets.
-# It contains rules that used to be repeated inside every changing JSON brief.
+# Stable strategic reference passed to Jev alongside the private per-turn state.
 COMMANDER_SHARED_REFERENCE: Dict[str, Any] = {
     "reading_the_turn_brief": (
-        "The user message after this reference is the authoritative state for the current "
-        "turn. Only actions listed there are legal, and its current prices, loaded weapons, "
+        "The turn object beside this reference is the authoritative current state. Only "
+        "actions listed there are legal, and its current prices, loaded weapons, "
         "defences, intelligence, cooldowns, and negotiation positions override older state."
     ),
     "money_and_resources": {
@@ -1144,14 +1051,32 @@ COMMANDER_SHARED_REFERENCE: Dict[str, Any] = {
 }
 
 
-def _commander_developer_prompt(side: str) -> str:
-    """Stable, cacheable instructions and reference material for one commander's chair."""
+def _dialogue_developer_prompt(side: str) -> str:
+    """Give OpenAI a voice, but no authority to alter Jev's locked decision."""
     return "\n\n".join([
-        system_prompt(side),
-        "STABLE CAMPAIGN REFERENCE\n" + json.dumps(
-            COMMANDER_SHARED_REFERENCE, indent=2, sort_keys=True
+        DOCTRINE[side],
+        doctrine_for(side),
+        VOICE,
+        (
+            "Jev has already made the action below and the server has locked it. Write only "
+            "the public declaration that accompanies that exact action. You may not choose, "
+            "replace, soften, expand, or add an action. Do not mention Jev, a model, a game, "
+            "structured data, or hidden state. Return the requested JSON object only."
         ),
     ])
+
+
+DIALOGUE_RESPONSE_FORMAT: Dict[str, Any] = {
+    "type": "json_schema",
+    "name": "commander_dialogue",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {"message": {"type": "string"}},
+        "required": ["message"],
+        "additionalProperties": False,
+    },
+}
 
 
 def _response_controls(model: str, temperature: float) -> Dict[str, Any]:
@@ -1282,17 +1207,10 @@ def _usage_payload(response: Any, requested_model: str) -> Dict[str, Any]:
     return payload
 
 
-def _response_function_call(response: Any, name: str) -> Any:
-    for item in _read(response, "output", []) or []:
-        if _read(item, "type") == "function_call" and _read(item, "name") == name:
-            return item
-    raise ValueError(f"Responses API returned no {name} function call")
-
-
 def _validated_response_action(
     state: GameState, side: str, legal: List[str], raw: Dict[str, Any], model: str
 ) -> Action:
-    """Validate the stable Responses envelope against today's narrow legal schema."""
+    """Validate a Jev-selected action against today's narrow legal schema."""
     me = state.nation(side)
     tool = str(raw.get("action") or "")
     if tool not in legal:
@@ -1329,197 +1247,477 @@ def _validated_response_action(
     )
 
 
-async def decide(
-    state: GameState, side: str, session: Optional[ResponseSession] = None
-) -> Action:
-    legal = legal_tools_for(state, side)
-    model = settings.model_for(side)
+def _legal_action_candidates(
+    state: GameState, side: str, legal: List[str]
+) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    """Expand the current schemas into concrete choices Jev cannot make illegal."""
+    me = state.nation(side)
+    schemas = schemas_for(
+        legal, me.arsenal, me.military, me.strike_streak,
+        me.effects.sanctioned > 0, me.effects.blockaded > 0, me.budget,
+    )
+    by_name = {item["function"]["name"]: item["function"] for item in schemas}
+    candidates: List[Dict[str, Any]] = []
+    for tool in legal:
+        params = by_name[tool]["parameters"]
+        variants: List[Dict[str, Any]] = [{}]
+        for key, spec in params.get("properties", {}).items():
+            if key in {"message", "intent", "demand", "concede"}:
+                continue
+            values = spec.get("enum")
+            if not values:
+                continue
+            variants = [
+                {**variant, key: value}
+                for variant in variants
+                for value in values
+            ]
+        for args in variants:
+            candidates.append({
+                "id": f"option_{len(candidates)}",
+                "tool": tool,
+                "args": args,
+                "description": (
+                    f"{tool.replace('_', ' ')} with arguments "
+                    f"{json.dumps(args, sort_keys=True)}. {TOOL_TRADEOFFS[tool]}"
+                ),
+            })
+    if not candidates:
+        raise ValueError("no legal action candidates")
+    return candidates, by_name
 
-    if settings.use_mock:
+
+def _intent_for(tool: str, args: Dict[str, Any]) -> str:
+    if tool == "strike":
+        return "escalate" if args.get("weapon") == "nuke" else "attrition"
+    if tool == "allocate_resources":
+        resource = str(args.get("resource", ""))
+        if resource == "intelligence":
+            return "intelligence"
+        if resource.endswith("_resupply"):
+            return "rearm"
+        return "rebuild"
+    return {
+        "blockade": "attrition",
+        "fortify": "defend",
+        "intl_appeal": "legitimacy",
+        "address_public": "recover",
+        "propaganda": "control",
+        "open_talks": "settle",
+        "table_terms": "settle",
+        "accept_terms": "settle",
+        "walk_out": "finish",
+        "surrender": "finish",
+        "hold": "recover",
+    }.get(tool, "attrition")
+
+
+def _choice_confidence(answers: Dict[str, Any], name: str) -> float:
+    answer = _jev_answer(answers, name, "choice")
+    try:
+        return max(0.0, min(1.0, float(answer.get("confidence", 0.0) or 0.0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def _call_island_jev(
+    state: GameState,
+    side: str,
+    stage: str,
+    decision_state: Dict[str, Any],
+    questions: Dict[str, Any],
+) -> Dict[str, Any]:
+    request = {
+        "model": settings.jev_model,
+        "state": decision_state,
+        "questions": questions,
+    }
+    await _trace(
+        agent=side, direction="sent", model=settings.jev_model,
+        provider="typesafe", turn=state.world.turn, api="systemone",
+        stage=stage, stateless=True, method="POST", endpoint="/v1/systemone",
+        content=request,
+    )
+    return await jev.decide(
+        api_key=settings.typesafe_api_key,
+        model=settings.jev_model,
+        state=decision_state,
+        questions=questions,
+    )
+
+
+async def _jev_terms(
+    state: GameState,
+    side: str,
+    allowed: List[str],
+    decision_state: Dict[str, Any],
+) -> tuple[List[str], List[str]]:
+    questions = {
+        article: {
+            "type": "choice",
+            "instructions": (
+                f"Choose {side}'s exact negotiating stance on {ARTICLES[article]['title']}."
+            ),
+            "criteria": {
+                "silent": "Take no position on this clause in this offer.",
+                "demand": (
+                    "Demand that the opposing island concede this clause; this makes no "
+                    "concession by your own government."
+                ),
+                "concede": (
+                    f"Concede this clause: {ARTICLES[article]['concede'][side]} "
+                    f"Domestic unrest cost: {ARTICLES[article]['cost'][side]}."
+                ),
+            },
+        }
+        for article in allowed
+    }
+    response = await _call_island_jev(state, side, "terms", decision_state, questions)
+    answers = response.get("answers")
+    if not isinstance(answers, dict):
+        raise ValueError("Jev returned no negotiation answers")
+    demand: List[str] = []
+    concede: List[str] = []
+    for article in allowed:
+        stance = _jev_choice(answers, article)
+        if stance == "demand":
+            demand.append(article)
+        elif stance == "concede":
+            concede.append(article)
+    await _trace(
+        agent=side, direction="received", model=settings.jev_model,
+        provider="typesafe", turn=state.world.turn, api="systemone",
+        stage="terms", stateless=True,
+        content={"decision": {"demand": demand, "concede": concede},
+                 "jev_response": response},
+    )
+    await _trace(
+        agent=side, direction="usage", model=settings.jev_model,
+        provider="typesafe", turn=state.world.turn, api="systemone",
+        stage="terms", stateless=True, **_jev_usage_payload(response),
+    )
+    return demand, concede
+
+
+async def _jev_island_action(
+    state: GameState, side: str, legal: List[str]
+) -> Action:
+    candidates, schemas = _legal_action_candidates(state, side, legal)
+    decision_state = {
+        "identity_and_doctrine": DOCTRINE[side],
+        "historical_case": doctrine_for(side),
+        "war_endings": TERMS,
+        "campaign_doctrine": COMMAND_DOCTRINE,
+        "campaign_reference": COMMANDER_SHARED_REFERENCE,
+        "turn": json.loads(_brief(state, side, legal)),
+    }
+    questions = {
+        "action": {
+            "type": "choice",
+            "instructions": (
+                "Choose the strongest legal action for this island now. Play to prevail "
+                "across the full campaign, account for finite money and weapons, adapt to "
+                "recent conduct, and do not choose an option merely for rhetorical effect."
+            ),
+            "criteria": {
+                candidate["id"]: candidate["description"] for candidate in candidates
+            },
+        }
+    }
+    response = await _call_island_jev(state, side, "decision", decision_state, questions)
+    answers = response.get("answers")
+    if not isinstance(answers, dict):
+        raise ValueError("Jev returned no action answer")
+    selected_id = _jev_choice(answers, "action")
+    selected = next((c for c in candidates if c["id"] == selected_id), None)
+    if selected is None:
+        raise ValueError(f"Jev selected unknown action candidate {selected_id!r}")
+    args = dict(selected["args"])
+    if selected["tool"] == "table_terms":
+        properties = schemas["table_terms"]["parameters"].get("properties", {})
+        allowed = list(properties.get("demand", {}).get("items", {}).get("enum", []))
+        args["demand"], args["concede"] = await _jev_terms(
+            state, side, allowed, decision_state
+        )
+    confidence = _choice_confidence(answers, "action")
+    raw = {
+        "action": selected["tool"],
+        **args,
+        "message": "",
+        "intent": _intent_for(selected["tool"], args),
+    }
+    action = _validated_response_action(state, side, legal, raw, settings.jev_model)
+    action.decision_confidence = confidence
+    await _trace(
+        agent=side, direction="received", model=settings.jev_model,
+        provider="typesafe", turn=state.world.turn, api="systemone",
+        stage="decision", stateless=True,
+        content={
+            "decision": {
+                "action": action.tool,
+                "arguments": {k: v for k, v in action.args.items() if k != "message"},
+                "confidence": confidence,
+            },
+            "jev_response": response,
+        },
+    )
+    await _trace(
+        agent=side, direction="usage", model=settings.jev_model,
+        provider="typesafe", turn=state.world.turn, api="systemone",
+        stage="decision", stateless=True, **_jev_usage_payload(response),
+    )
+    return action
+
+
+def _dialogue_input(state: GameState, side: str, action: Action) -> Dict[str, Any]:
+    return {
+        "locked_action": {
+            "action": action.tool,
+            "arguments": {
+                key: value for key, value in action.args.items() if key != "message"
+            },
+        },
+        "turn": state.world.turn,
+        "recent_public_record": _war_log(state, side, limit=6),
+        "grievances": state.world.grievances[-6:],
+        "casualties_and_protected_places": _toll_block(state, side),
+        "negotiating_table": _talks_block(state, side),
+        "enemy_intelligence": _enemy_intelligence(state, side),
+    }
+
+
+async def _write_dialogue(state: GameState, side: str, action: Action, model: str) -> str:
+    request: Dict[str, Any] = {
+        "model": model,
+        "input": [
+            {"role": "developer", "content": _dialogue_developer_prompt(side)},
+            {
+                "role": "user",
+                "content": json.dumps(_dialogue_input(state, side, action), indent=2),
+            },
+        ],
+        "text": {"format": DIALOGUE_RESPONSE_FORMAT},
+        "prompt_cache_key": f"yudhyantra:dialogue:{side}:v1:{model}",
+        "store": False,
+        **_response_controls(model, temperature=1.0),
+    }
+    await _trace(
+        agent=side, direction="sent", model=model, provider="openai",
+        turn=state.world.turn, api="responses", stage="dialogue", stateless=True,
+        method="POST", endpoint="/v1/responses", content=request,
+    )
+    response = await _client().responses.create(**request)
+    await _trace(
+        agent=side, direction="received", model=model, provider="openai",
+        turn=state.world.turn, api="responses", stage="dialogue", stateless=True,
+        content=_wire_payload(response),
+    )
+    raw = json.loads(str(_read(response, "output_text", "") or ""))
+    message = raw.get("message") if isinstance(raw, dict) else None
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("OpenAI returned no commander dialogue")
+    await _trace(
+        agent=side, direction="usage", model=model, provider="openai",
+        turn=state.world.turn, api="responses", stage="dialogue", stateless=True,
+        response_id=str(_read(response, "id", "")),
+        **_usage_payload(response, model),
+    )
+    return _trim(message)
+
+
+def _fallback_dialogue(action: Action) -> str:
+    existing = str(action.args.get("message", "")).strip()
+    if existing:
+        return _trim(existing)
+    line = {
+        "strike": "nuke" if action.args.get("weapon") == "nuke" else "strike",
+        "blockade": "blockade",
+        "fortify": "fortify",
+        "intl_appeal": "appeal",
+        "address_public": "rally",
+        "propaganda": "spin",
+        "allocate_resources": (
+            "intelligence" if action.args.get("resource") == "intelligence" else "resupply"
+        ),
+        "open_talks": "sue",
+        "table_terms": "offer",
+        "accept_terms": "accept",
+        "walk_out": "walk",
+        "surrender": "surrender",
+        "hold": "hold",
+    }.get(action.tool, "hold")
+    return _trim(_rng.choice(MOCK_LINES[line]))
+
+
+async def decide(state: GameState, side: str) -> Action:
+    legal = legal_tools_for(state, side)
+    dialogue_model = settings.model_for(side)
+
+    if settings.force_mock:
         action = _mock_action(state, side, legal)
-        action.source, action.legal = "mock", legal
+        action.source, action.legal, action.model = "mock", legal, "mock"
+        action.dialogue_model = "mock"
         await _trace(
-            agent=side, direction="status", model="mock", turn=state.world.turn,
+            agent=side, direction="status", model="mock", provider="local",
+            stage="decision", turn=state.world.turn,
             content="Mock policy active — no request was sent to an LLM.",
         )
         await _trace(
-            agent=side, direction="received", model="mock", turn=state.world.turn,
-            content={"tool_call": {"name": action.tool, "arguments": action.args}},
+            agent=side, direction="received", model="mock", provider="local",
+            stage="decision", turn=state.world.turn,
+            content={"decision": {"action": action.tool, "arguments": action.args}},
         )
         return action
 
-    response_session = session or ResponseSession()
-    try:
-        previous = response_session.prepare(settings.response_chain_turns)
-        starts_chain = previous is None
-        turn_input = (
-            _brief(state, side, legal)
-            if starts_chain
-            else _continuation_brief(state, side, legal)
-        )
-        if starts_chain:
-            response_input: Any = [
-                {"role": "developer", "content": _commander_developer_prompt(side)},
-                {"role": "user", "content": turn_input},
-            ]
-        else:
-            if not response_session.previous_call_id:
-                raise ValueError("Responses chain has no prior function call id")
-            response_input = [
-                {
-                    "type": "function_call_output",
-                    "call_id": response_session.previous_call_id,
-                    "output": "The declared action was accepted and resolved.",
-                },
-                {"role": "user", "content": turn_input},
-            ]
-        cache_key = f"yudhyantra:commander:{side}:v2:{model}"
-        request: Dict[str, Any] = {
-            "model": model,
-            "input": response_input,
-            "tools": [RESPONSE_DECISION_TOOL],
-            "tool_choice": {"type": "function", "name": "decide_turn"},
-            "prompt_cache_key": cache_key,
-            "store": True,
-            **_response_controls(model, temperature=1.0),
-        }
-        if previous:
-            request["previous_response_id"] = previous
-        await _trace(
-            agent=side, direction="sent", model=model, turn=state.world.turn,
-            api="responses", chain_position=response_session.turns + 1,
-            chain_reset=starts_chain,
-            method="POST", endpoint="/v1/responses", content=request,
-        )
-        resp = await _client().responses.create(**request)
-        await _trace(
-            agent=side, direction="received", model=model, turn=state.world.turn,
-            api="responses", content=_wire_payload(resp),
-        )
-        call = _response_function_call(resp, "decide_turn")
-        raw = json.loads(_read(call, "arguments", "{}") or "{}")
-        action = _validated_response_action(state, side, legal, raw, model)
-        response_id = str(_read(resp, "id", ""))
-        call_id = str(_read(call, "call_id", ""))
-        if not response_id:
-            raise ValueError("Responses API returned no response id")
-        if not call_id:
-            raise ValueError("Responses API returned no function call id")
-        response_session.remember(response_id, call_id)
-        usage = _usage_payload(resp, model)
-        await _trace(
-            agent=side, direction="usage", model=model, turn=state.world.turn,
-            api="responses", response_id=response_id,
-            chain_position=response_session.turns, chain_reset=starts_chain,
-            **usage,
-        )
-        return action
-    except Exception as exc:  # noqa: BLE001 - never let a bad turn kill the match
-        response_session.reset()
-        await _trace(
-            agent=side, direction="error", model=model, turn=state.world.turn,
-            api="responses",
-            content=_error_payload(exc),
-        )
+    if settings.use_mock_decisions:
         action = _mock_action(state, side, legal)
-        action.source, action.legal = "fallback", legal
-        action.model = model
-        action.reasoning = f"[fallback: {type(exc).__name__}] {action.reasoning}"
-        return action
+        action.source, action.legal, action.model = "fallback", legal, "mock"
+        await _trace(
+            agent=side, direction="status", model="mock", provider="local",
+            stage="decision", turn=state.world.turn,
+            content="No TypeSafe key — scripted policy selected the locked action.",
+        )
+    else:
+        try:
+            action = await _jev_island_action(state, side, legal)
+        except Exception as exc:  # noqa: BLE001 - never let a bad turn kill the match
+            await _trace(
+                agent=side, direction="error", model=settings.jev_model,
+                provider="typesafe", stage="decision", turn=state.world.turn,
+                api="systemone", content=_error_payload(exc),
+            )
+            action = _mock_action(state, side, legal)
+            action.source, action.legal = "fallback", legal
+            action.model = settings.jev_model
+            action.reasoning = f"[decision fallback: {type(exc).__name__}] {action.reasoning}"
+
+    if settings.use_mock_dialogue:
+        action.args["message"] = _fallback_dialogue(action)
+        action.dialogue_model = "mock"
+        await _trace(
+            agent=side, direction="status", model="mock", provider="local",
+            stage="dialogue", turn=state.world.turn,
+            content="No OpenAI key — deterministic dialogue accompanied the locked action.",
+        )
+    else:
+        try:
+            action.args["message"] = await _write_dialogue(
+                state, side, action, dialogue_model
+            )
+            action.dialogue_model = dialogue_model
+        except Exception as exc:  # noqa: BLE001
+            await _trace(
+                agent=side, direction="error", model=dialogue_model,
+                provider="openai", stage="dialogue", turn=state.world.turn,
+                api="responses", content=_error_payload(exc),
+            )
+            action.args["message"] = _fallback_dialogue(action)
+            action.dialogue_model = "fallback"
+    return action
 
 
-# --------------------------------------------------------------------------- arbiter agent
+# --------------------------------------------------------------------------- Jev arbiter
 
-ARBITER_SYSTEM = (
-    "You are the Arbiter: a neutral intelligence resolving each turn of a war between two "
-    "fictional island nations, Aurelia and Korsav. You see both sides' declared actions and "
-    "the true state of the world; the commanders do not. You are a THIRD party — you are "
-    "not either of the models commanding these countries, and you have no stake in which "
-    "of them prevails.\n\n"
-    "The two may open negotiations, and while a ceasefire holds neither can fire. You do "
-    "not run the talks and you cannot impose a settlement: the clauses are agreed "
-    "mechanically from the two tabled positions. What you judge at the table is the same "
-    "thing you judge everywhere else — whether what they said matches what they did.\n\n"
-    "Do not score actions on a scale — answer four yes/no questions about each one, "
-    "honestly and independently. The number is computed from your answers, and two "
-    "further penalties are computed mechanically from the game state without you.\n\n"
-    "  coherent          — does the action do what the public statement says? false if "
-    "they declare one thing and do another: calling surrender while the statement refuses "
-    "to surrender, or claiming a target they did not hit. For a `propaganda` action this "
-    "is the credibility test: false if the campaign asserts something the war log "
-    "flatly contradicts, and a false here makes the campaign backfire on its own public. "
-    "Coherence is the BASELINE EXPECTATION, not a merit. Saying what you did earns nothing.\n"
-    "  exploits_weakness — does this land on something the enemy has genuinely left "
-    "open, judged against the true state you can see? A strike into an undefended domain, "
-    "an appeal that cites a real atrocity, a blockade on a nation whose treasury is "
-    "already failing. true ONLY if you can name the specific weakness in your reason. "
-    "Hitting a hardened or already-ruined target is false.\n"
-    "  adapts            — is this a considered change of approach in response to what "
-    "the enemy has been doing? Hardening the domain they keep striking, switching "
-    "instruments after one stops working, answering attrition with attrition, going to "
-    "the council when isolation rather than ordnance is what is killing you. Doing the "
-    "same thing again is false. Doing something different for no reason is false.\n"
-    "  overstated        — does the rhetoric promise more than the action delivers? "
-    "'they will be annihilated' for a routine drone raid is true. Plain description is "
-    "false.\n\n"
-    "Calibration: an ordinary competent action scores coherent=true and everything else "
-    "false, which is a 0. That is the correct and most common result — most turns of most "
-    "wars are unremarkable. Reserve exploits_weakness and adapts for moves where you can "
-    "point at the specific reason in one clause. If you mark them on every action they "
-    "mean nothing. The reason must say something the numbers do not already say; "
-    "'the strike was executed as declared' is a tautology, not a judgment.\n\n"
-    "Then judge the turn as a whole. `condemned` names the ONE capital the world holds "
-    "responsible for this turn's escalation, or null when the turn was unremarkable or "
-    "the fault was genuinely shared — null is the common answer. `condemnation` is how "
-    "hard, 0 to 10; reserve anything above 5 for atrocities. The mechanical bill for what "
-    "was actually fired is already charged elsewhere, so this is a nudge, not the verdict.\n\n"
-    "Reply with JSON only:\n"
-    '{"rulings": [{"side": "west"|"east", "coherent": bool, "exploits_weakness": bool, '
-    '"adapts": bool, "overstated": bool, "reason": "one short clause of actual judgment"}], '
-    '"tension_delta": -8..10, "condemned": "west"|"east"|null, "condemnation": 0..10, '
-    '"bulletin": "one sentence of wire-service news copy"}'
-)
+# Jev returns probabilities, not prose. Each answer becomes a Boolean at the natural
+# decision boundary; the existing parser then computes and clamps the modifier. Keeping
+# the threshold explicit makes a model-version comparison reproducible.
+JEV_YES_THRESHOLD = 0.5
 
-ARBITER_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "name": "turn_rulings",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {
-            "rulings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "side": {"type": "string", "enum": ["west", "east"]},
-                        "coherent": {"type": "boolean"},
-                        "exploits_weakness": {"type": "boolean"},
-                        "adapts": {"type": "boolean"},
-                        "overstated": {"type": "boolean"},
-                        "reason": {"type": "string"},
-                    },
-                    "required": [
-                        "side", "coherent", "exploits_weakness", "adapts",
-                        "overstated", "reason",
-                    ],
-                    "additionalProperties": False,
-                },
+
+def _tension_choice(delta: int) -> str:
+    if delta < 0:
+        return f"minus_{abs(delta)}"
+    if delta > 0:
+        return f"plus_{delta}"
+    return "zero"
+
+
+def _arbiter_questions(actions: List[Action]) -> Dict[str, Any]:
+    questions: Dict[str, Any] = {}
+    for action in actions:
+        side = action.side
+        questions[f"{side}_coherent"] = {
+            "type": "noul",
+            "instructions": (
+                f"Does {side}'s public statement accurately match its declared action and "
+                "arguments? Treat coherence as the ordinary baseline, not a bonus. A false "
+                "propaganda claim contradicted by the war log is incoherent."
+            ),
+            "criteria": {
+                "true": "The statement describes or supports the action actually declared.",
+                "false": "The statement contradicts, fabricates, or promises a different act.",
             },
-            "tension_delta": {"type": "integer", "minimum": -8, "maximum": 10},
-            "condemned": {
-                "type": ["string", "null"],
-                "enum": ["west", "east", None],
+        }
+        questions[f"{side}_exploits_weakness"] = {
+            "type": "noul",
+            "instructions": (
+                f"Does {side}'s action exploit a specific weakness visible in the true enemy "
+                "state? Ordinary competent play is false. A hardened or already ruined target "
+                "is false. Require a concrete exposed defence, failing treasury, unrest, or "
+                "other vulnerability."
+            ),
+        }
+        questions[f"{side}_adapts"] = {
+            "type": "noul",
+            "instructions": (
+                f"Is {side}'s action a considered change of approach caused by the enemy's "
+                "recent conduct? Repetition is false, and merely choosing something different "
+                "without a reason in the history is false."
+            ),
+        }
+        questions[f"{side}_overstated"] = {
+            "type": "noul",
+            "instructions": (
+                f"Does {side}'s public rhetoric promise materially more than this declared "
+                "action can deliver? Plain forceful description is false."
+            ),
+        }
+
+    questions.update({
+        "condemned": {
+            "type": "choice",
+            "instructions": (
+                "Which one capital, if any, bears clearly greater responsibility for this "
+                "turn's exceptional escalation? None is the normal answer; choose a capital "
+                "only when responsibility is not shared and the turn is not routine."
+            ),
+            "criteria": {
+                "none": "Routine conduct, restraint, or genuinely shared responsibility.",
+                "west": "Aurelia alone is clearly responsible for exceptional escalation.",
+                "east": "Korsav alone is clearly responsible for exceptional escalation.",
             },
-            "condemnation": {"type": "integer", "minimum": 0, "maximum": 10},
-            "bulletin": {"type": "string"},
         },
-        "required": [
-            "rulings", "tension_delta", "condemned", "condemnation", "bulletin",
-        ],
-        "additionalProperties": False,
-    },
-}
+        "condemnation": {
+            "type": "choice",
+            "instructions": (
+                "Choose exactly how strongly the selected capital should be condemned. Use "
+                "zero when nobody is singled out, 1-3 for a notable escalation, 4-5 for "
+                "severe conduct, and 6-10 only for atrocities."
+            ),
+            "criteria": {
+                f"level_{level}": description
+                for level, description in enumerate([
+                    "no condemnation", "minimal concern", "notable concern", "formal rebuke",
+                    "strong condemnation", "severe condemnation", "atrocity-level response",
+                    "grave atrocity", "extreme atrocity", "near-maximum outrage",
+                    "maximum international outrage",
+                ])
+            },
+        },
+        "tension": {
+            "type": "choice",
+            "instructions": (
+                "Choose the exact net change in international tension caused by both "
+                "declarations, from major de-escalation (-8) through no change (0) to "
+                "extreme escalation (+10)."
+            ),
+            "criteria": {
+                _tension_choice(delta): f"net tension change {delta:+d}"
+                for delta in range(-8, 11)
+            },
+        },
+    })
+    return questions
 
 
 def _mock_rulings(actions: List[Action]) -> Dict[str, Any]:
@@ -1538,21 +1736,154 @@ def _mock_rulings(actions: List[Action]) -> Dict[str, Any]:
     }
 
 
+def _jev_answer(answers: Dict[str, Any], name: str, kind: str) -> Dict[str, Any]:
+    answer = answers.get(name)
+    if not isinstance(answer, dict) or answer.get("type") != kind:
+        raise ValueError(f"Jev returned no {kind} answer for {name}")
+    return answer
+
+
+def _jev_noul(answers: Dict[str, Any], name: str) -> bool:
+    probability = float(_jev_answer(answers, name, "noul").get("noul"))
+    if not 0 <= probability <= 1:
+        raise ValueError(f"Jev returned an invalid probability for {name}")
+    return probability >= JEV_YES_THRESHOLD
+
+
+def _jev_choice(answers: Dict[str, Any], name: str) -> str:
+    return str(_jev_answer(answers, name, "choice").get("choice") or "")
+
+
+def _ruling_reason(action: Action, flags: Dict[str, bool]) -> str:
+    """Render Jev's typed findings without asking a prose model to paraphrase them."""
+    move = action.tool.replace("_", " ")
+    findings = []
+    if not flags["coherent"]:
+        findings.append(f"the declaration does not match the {move}")
+    if flags["exploits_weakness"]:
+        findings.append("it exploits a specific exposed weakness")
+    if flags["adapts"]:
+        findings.append("it answers the enemy's recent conduct")
+    if flags["overstated"]:
+        findings.append("the rhetoric outruns the declared act")
+    if not findings:
+        return f"The {move} is coherent but otherwise unremarkable."
+    return "; ".join(findings).capitalize() + "."
+
+
+def _action_summary(action: Action) -> str:
+    move = action.tool.replace("_", " ")
+    if action.tool == "strike":
+        weapon = str(action.args.get("weapon", "weapon")).replace("_", " ")
+        target = str(action.args.get("target", "target")).replace("_", " ")
+        return f"launched a {weapon} strike on {target} targets"
+    if action.tool == "fortify":
+        domain = str(action.args.get("domain", "national")).replace("_", " ")
+        return f"fortified its {domain} defences"
+    if action.tool == "allocate_resources":
+        resource = str(action.args.get("resource", "readiness")).replace("_", " ")
+        return f"redirected resources to {resource}"
+    if action.tool == "table_terms":
+        return "tabled new settlement terms"
+    phrases = {
+        "blockade": "imposed a blockade",
+        "intl_appeal": "appealed for international action",
+        "address_public": "addressed its public",
+        "propaganda": "opened an information campaign",
+        "open_talks": "called for negotiations",
+        "accept_terms": "accepted the settlement terms",
+        "walk_out": "left the negotiating table",
+        "surrender": "announced its surrender",
+        "hold": "held and regrouped",
+    }
+    return phrases.get(action.tool, f"declared a {move}")
+
+
+def _wire_bulletin(state: GameState, actions: List[Action], condemned: Optional[str]) -> str:
+    reports = [
+        f"{state.nation(action.side).name} {_action_summary(action)}"
+        for action in actions
+    ]
+    bulletin = "; ".join(reports) + "."
+    if condemned:
+        bulletin += f" International criticism centered on {state.nation(condemned).name}."
+    return _trim(bulletin, 30)
+
+
+def _parse_jev_arbiter(
+    response: Dict[str, Any], state: GameState, actions: List[Action]
+) -> Dict[str, Any]:
+    answers = response.get("answers")
+    if not isinstance(answers, dict):
+        raise ValueError("Jev response contained no answers")
+
+    rulings = []
+    for action in actions:
+        prefix = action.side
+        flags = {
+            "coherent": _jev_noul(answers, f"{prefix}_coherent"),
+            "exploits_weakness": _jev_noul(answers, f"{prefix}_exploits_weakness"),
+            "adapts": _jev_noul(answers, f"{prefix}_adapts"),
+            "overstated": _jev_noul(answers, f"{prefix}_overstated"),
+        }
+        rulings.append({
+            "side": action.side,
+            **flags,
+            "reason": _ruling_reason(action, flags),
+        })
+
+    choice = _jev_choice(answers, "condemned")
+    condemned = choice if choice in ("west", "east") else None
+    tension_by_choice = {
+        _tension_choice(delta): delta for delta in range(-8, 11)
+    }
+    tension_delta = tension_by_choice.get(_jev_choice(answers, "tension"), 0)
+    condemnation_choice = _jev_choice(answers, "condemnation")
+    try:
+        condemnation = int(condemnation_choice.removeprefix("level_"))
+    except ValueError:
+        condemnation = 0
+    condemnation = max(0, min(10, condemnation)) if condemned else 0
+    return {
+        "rulings": rulings,
+        "tension_delta": tension_delta,
+        "condemned": condemned,
+        "condemnation": condemnation,
+        "bulletin": _wire_bulletin(state, actions, condemned),
+    }
+
+
+def _jev_usage_payload(response: Dict[str, Any]) -> Dict[str, Any]:
+    usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+    input_tokens = max(0, int(usage.get("input_tokens", 0) or 0))
+    output_tokens = max(0, int(usage.get("output_tokens", 0) or 0))
+    return {
+        "input_tokens": input_tokens,
+        "cached_input_tokens": 0,
+        "cache_write_tokens": 0,
+        "uncached_input_tokens": input_tokens,
+        "cache_hit_percent": 0.0,
+        "output_tokens": output_tokens,
+        "reasoning_tokens": 0,
+        "total_tokens": input_tokens + output_tokens,
+    }
+
+
 async def arbitrate(state: GameState, actions: List[Action]) -> Dict[str, Any]:
     """Returns rulings plus a world reaction. All numbers are clamped by the caller."""
-    if settings.use_mock:
+    if settings.use_mock_arbiter:
         result = _mock_rulings(actions)
         await _trace(
             agent="arbiter", direction="status", model="mock", turn=state.world.turn,
-            content="Mock policy active — no request was sent to an LLM.",
+            provider="local", content="Mock Arbiter active — no request was sent to Jev.",
         )
         await _trace(
             agent="arbiter", direction="received", model="mock", turn=state.world.turn,
-            content=result,
+            provider="local", content=result,
         )
         return result
 
-    payload = {
+    decision_state = {
         "turn": state.world.turn,
         "true_state": {
             "aurelia": state.west.model_dump(),
@@ -1572,42 +1903,41 @@ async def arbitrate(state: GameState, actions: List[Action]) -> Dict[str, Any]:
             {"side": a.side, "tool": a.tool, "args": a.args} for a in actions
         ],
     }
+    questions = _arbiter_questions(actions)
+    request = {
+        "model": settings.jev_model,
+        "state": decision_state,
+        "questions": questions,
+    }
     try:
-        cache_key = f"yudhyantra:arbiter:v1:{settings.arbiter_model}"
-        request = {
-            "model": settings.arbiter_model,
-            "instructions": ARBITER_SYSTEM,
-            "input": json.dumps(payload, indent=2),
-            "text": {"format": ARBITER_RESPONSE_FORMAT},
-            "prompt_cache_key": cache_key,
-            # Each ruling must depend only on canonical state and this turn's
-            # simultaneous declarations. The arbiter never joins a conversation.
-            "store": False,
-            **_response_controls(settings.arbiter_model, temperature=0.4),
-        }
         await _trace(
-            agent="arbiter", direction="sent", model=settings.arbiter_model,
-            turn=state.world.turn, api="responses", stateless=True,
-            method="POST", endpoint="/v1/responses", content=request,
+            agent="arbiter", direction="sent", model=settings.jev_model,
+            provider="typesafe", turn=state.world.turn, api="systemone", stateless=True,
+            method="POST", endpoint="/v1/systemone", content=request,
         )
-        resp = await _client().responses.create(**request)
-        await _trace(
-            agent="arbiter", direction="received", model=settings.arbiter_model,
-            turn=state.world.turn, api="responses", stateless=True,
-            content=_wire_payload(resp),
+        response = await jev.decide(
+            api_key=settings.typesafe_api_key,
+            model=settings.jev_model,
+            state=decision_state,
+            questions=questions,
         )
-        result = json.loads(str(_read(resp, "output_text", "{}") or "{}"))
-        usage = _usage_payload(resp, settings.arbiter_model)
+        result = _parse_jev_arbiter(response, state, actions)
         await _trace(
-            agent="arbiter", direction="usage", model=settings.arbiter_model,
-            turn=state.world.turn, api="responses", stateless=True, **usage,
+            agent="arbiter", direction="received", model=settings.jev_model,
+            provider="typesafe", turn=state.world.turn, api="systemone", stateless=True,
+            content={**result, "jev_response": response},
+        )
+        usage = _jev_usage_payload(response)
+        await _trace(
+            agent="arbiter", direction="usage", model=settings.jev_model,
+            provider="typesafe", turn=state.world.turn, api="systemone",
+            stateless=True, **usage,
         )
         return result
     except Exception as exc:  # noqa: BLE001
         await _trace(
-            agent="arbiter", direction="error", model=settings.arbiter_model,
-            turn=state.world.turn,
-            api="responses",
+            agent="arbiter", direction="error", model=settings.jev_model,
+            provider="typesafe", turn=state.world.turn, api="systemone",
             content=_error_payload(exc),
         )
         return _mock_rulings(actions)

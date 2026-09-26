@@ -1,66 +1,64 @@
 # yudhyantra — war machines
 
 Two island nations that have hated each other for sixty-one years. You chair the neutral
-Meridian Council; one small Council decision breaks the deadlock and starts the war. Two
-LLM agents fight it and a third adjudicates. You can answer either island's requests, but
-never command a combat move or join a side.
+Meridian Council; one small Council decision breaks the deadlock and starts the war. Jev
+decides how both islands fight and adjudicates the result; OpenAI gives each island its
+public voice. You can answer either island's requests, but never command a combat move or
+join a side.
 
 ## Shape
 
-- **Aurelia** (west) and **Korsav** (east), one agent each. Every move is a **tool call** —
+- **Aurelia** (west) and **Korsav** (east), one private Jev decision each. Every move is
+  selected from a concrete legal action —
   `strike`, `blockade`, `fortify`, `intl_appeal`, `address_public`, `propaganda`,
   `allocate_resources`, `open_talks`, `table_terms`, `accept_terms`, `walk_out`,
-  `surrender`, `hold`. Nothing is free text.
-- **The Arbiter** sees both declared actions and the true world state, judges each for
-  credibility, and returns a bounded modifier plus a news bulletin.
+  `surrender`, `hold`. Action selection is never free text.
+- **The Arbiter** is also TypeSafe AI's Jev. It sees both declared actions and the true world
+  state and returns typed, probabilistic judgments. The server turns those judgments into
+  bounded modifiers and deterministic wire copy.
 - **You** give history one small nudge to trigger the conflict. During the war, islands
   periodically ask for relief, stabilization money, defensive systems, conventional
   weapons, or diplomatic cover. You approve or decline from a finite Council fund; an
   unsolicited grant is not possible, and recipients decide how approved aid is used.
 
-The split that keeps it honest: `engine.py` owns every number. The arbiter only ever returns
-a `-2..+2` modifier and an `effective` flag, both clamped server-side. A hallucinating model
-costs you flavor, never simulation integrity.
+The split that keeps it honest: `engine.py` owns every number. For each island, the server
+enumerates legal actions and Jev chooses one from that closed set using only that island's
+private view. OpenAI then receives the locked action and may return only its dialogue.
+Separately, Jev answers the Arbiter's concrete questions—coherent, adaptive, overstated,
+exploiting a weakness, condemnation and tension—and server code computes the `-2..+2`
+modifier and `effective` flag. Results are still clamped before reaching the simulation.
 
-Hosted model traffic uses the Responses API in three isolated lanes. Aurelia and Korsav
-each get their own short, match-local chain (four decisions by default), then restart from
-the canonical state. The arbiter is stateless: every ruling receives the true current state
-and both simultaneous declarations, with no commander conversation and no previous response
-ID. The stable instructions and decision schema sit at the front of every request so
-automatic prompt caching can reuse that prefix; only current state and recent public events
-change.
+Island decisions use separate stateless System One requests, preserving hidden information.
+Dialogue uses separate stateless Responses API requests with no tools and no response chain.
+The Jev Arbiter is also stateless: one request receives the true current state and both
+simultaneous declarations, asks eleven typed questions in parallel, and shares no island
+decision context. Jev does not generate dialogue, ruling reasons, or bulletins; those are
+written by OpenAI or rendered deterministically from typed decisions.
 
 Each nation sees its own exact stats but only **coarse bands** of the enemy's
 (`strong` / `holding` / `strained` / `critical`). Hidden information is the game. Public
 unrest is visible only as a mood band, while the one number nobody can hide is the body
 count.
 
-## Three chairs, three models
+## One decision system, two public voices
 
-One model playing both nations and then judging itself is not a war; it is a model talking
-to itself. The same priors read the same brief, reach for the same tool, and then rule that
-reaching for it was reasonable — and whatever comes out is a property of the model, not of
-the balance.
+Jev owns strategy on both islands and the neutral ruling, but each call has a deliberately
+different information boundary: island calls see only their private briefs; the Arbiter sees
+the unredacted state only after both actions are locked. OpenAI has no strategic authority.
+Its two models provide contrasting public voices for the same typed decision system.
 
-The two commanders get different OpenAI models in the same price tier, because the
-experiment has to be about the models rather than about who paid more:
-
-| chair | default | $/1M in · out |
+| role | default | $/1M in · out |
 |---|---|---|
-| Aurelia | `gpt-5-nano` | 0.05 · 0.40 |
-| Korsav | `gpt-4.1-nano` | 0.10 · 0.40 |
-| Arbiter | `gpt-5-nano` | 0.05 · 0.40 |
+| Aurelia dialogue | `gpt-5-nano` | 0.05 · 0.40 |
+| Korsav dialogue | `gpt-4.1-nano` | 0.10 · 0.40 |
+| Island decisions + Arbiter | `jev-latest` | 0.042 · free |
 
-The separation that matters is between the two **commanders**. The arbiter repeating a
-family is a much smaller effect and not worth paying triple for, so it takes the cheapest
-seat — which does mean the referee shares a family with Aurelia's chair. `SWAP_MODELS=1`
-moves that model to Korsav's chair, so a paired run scores both arrangements and whatever
-the shared family is worth cancels out between them. It also stops one model being
-permanently the rich republic, which is a bias of its own.
+`SWAP_MODELS=1` reverses the dialogue voices. It does not change Jev's decisions or the
+information available to either island.
 
-A whole twelve-turn match costs well under a cent. Which model is in which chair is shown
-in the UI beside each country's name and stamped into every match log. `NATION_MODEL`
-overrides both commanders for a controlled single-model run.
+A whole twelve-turn match costs well under a cent. Which dialogue model voices each island
+is shown in the UI and stamped into every match log. `NATION_MODEL`
+overrides both dialogue voices for a controlled voice comparison.
 
 ## The quarrel
 
@@ -274,20 +272,26 @@ MOCK=1 ./.venv/bin/uvicorn app.main:app --port 8077
 cd web && npm install && npm run dev    # http://localhost:5173
 ```
 
-`MOCK=1` runs scripted commanders with no model calls. For a live match, put an OpenAI API
-key in `backend/.env` and start the backend without `MOCK=1`:
+`MOCK=1` runs scripted commanders and the local bounded referee with no model calls. For a
+fully live match, put both provider keys in `backend/.env` and start the backend without
+`MOCK=1`:
 
 ```bash
 OPENAI_API_KEY=sk-proj-...
+TYPESAFE_API_KEY=tsf-...
 ./.venv/bin/uvicorn app.main:app --port 8077
 ```
 
-All three chairs use OpenAI's Responses API and the model panel shown above. Without a key,
-the backend automatically uses the scripted policy.
+Island decisions and the Arbiter use TypeSafe's `/v1/systemone` endpoint. OpenAI's
+Responses API writes only the declaration accompanying each locked action. Their fallbacks
+are independent: without an OpenAI key, deterministic local dialogue voices the Jev action;
+without a TypeSafe key, the scripted policy chooses island actions and the Arbiter uses its
+local bounded fallback.
 
 In development, enable **dev view** in the header to inspect each chair's live system
-instructions, current-state brief, available tools, response, latency, usage, and errors.
-The stream is opt-in, never enters match recordings, and is unavailable in production.
+decision state, legal candidates, locked action, dialogue request, latency, usage, and errors.
+For the Arbiter it shows the Jev questions, probabilities, normalized ruling, latency and
+usage. The stream is opt-in, never enters match recordings, and is unavailable in production.
 
 The header's **sound** control plays a recorded 2:51 military/covert-ops score that builds
 from dark suspense into hard combat intensity. The bundled track has no runtime API,
@@ -364,8 +368,8 @@ Two things never come from the recording. The underlying crisis deck and the qua
 always built from today's code, so a log recorded before an opening existed can still use
 the current crisis setup; and old state dumps are re-validated on load, so fields that
 did not exist when the log was written arrive with the defaults a fresh match would have
-had. The three chairs *are* read back off the log — who played which island is a fact about
-that match, not about this build, and the panel labels say so.
+had. The two dialogue voices and Arbiter model *are* read back off the log — who voiced
+which island is a fact about that match, not about this build, and the panel labels say so.
 
 A `civilian` strike is the branch the bench has never reached, and now never will from a
 fixture: the protected-place path only opens when a commander picks that target, which
@@ -377,7 +381,8 @@ list above — the price of a bench made of one real war instead of five picked 
 | var | default | |
 |---|---|---|
 | `APP_ENV` | `development` | controls development diagnostics defaults |
-| `OPENAI_API_KEY` | — | required for live model calls; absent ⇒ mock mode |
+| `OPENAI_API_KEY` | — | required for live dialogue only; absent ⇒ deterministic dialogue |
+| `TYPESAFE_API_KEY` | — | required for live island decisions and Arbiter; absent ⇒ local policy/referee fallbacks |
 | `ELEVENLABS_API_KEY` | — | optional preferred neural TTS; free plan includes limited characters |
 | `ELEVENLABS_VOICE_WEST` | — | ElevenLabs voice ID for Aurelia |
 | `ELEVENLABS_VOICE_EAST` | — | ElevenLabs voice ID for Korsav |
@@ -385,13 +390,12 @@ list above — the price of a bench made of one real war instead of five picked 
 | `CLOUDFLARE_API_TOKEN` | — | backend-only Workers AI token |
 | `TTS_VOICE_WEST` | `atlas` | Aura-2 fallback voice for Aurelia |
 | `TTS_VOICE_EAST` | `jupiter` | Aura-2 fallback voice for Korsav |
-| `WEST_MODEL` | `gpt-5-nano` | Aurelia's chair |
-| `EAST_MODEL` | `gpt-4.1-nano` | Korsav's chair |
-| `ARBITER_MODEL` | `gpt-5-nano` | the referee |
-| `NATION_MODEL` | — | if set, overrides *both* commanders (single-model run) |
-| `SWAP_MODELS` | — | `1` reverses which model commands which island |
+| `WEST_MODEL` | `gpt-5-nano` | Aurelia's dialogue voice |
+| `EAST_MODEL` | `gpt-4.1-nano` | Korsav's dialogue voice |
+| `JEV_MODEL` | `jev-latest` | TypeSafe island-decision and Arbiter model or pinned version |
+| `NATION_MODEL` | — | if set, overrides both dialogue voices |
+| `SWAP_MODELS` | — | `1` reverses which dialogue model voices each island |
 | `MAX_TURNS` | `12` | |
-| `RESPONSE_CHAIN_TURNS` | `4` | hosted decisions retained per island before a fresh canonical brief starts a new chain |
 | `REVEAL` | `18.0` | seconds one declared action owns the stage |
 | `TURN_PAUSE` | `4.0` | seconds between turns |
 | `BEAT` | `0.6` | short punctuation pauses |
@@ -423,7 +427,7 @@ backend/app/
   nations.py   the two profiles — opening position, magazine, and five multipliers
   tools.py     the arsenal — function schemas, prices, interception, lethality, places
   engine.py    deterministic mechanics; owns all numbers, including the table
-  agents.py    two commanders + the arbiter, each with a scripted fallback
+  agents.py    two private Jev decisions + OpenAI dialogue + Jev Arbiter, with fallbacks
   game.py      ignition dossiers, paced turn loop, event stream
   replay.py    the bench — recordings, turn cuts, jumps, reconstructed pacing
   speech.py    cached ElevenLabs v3 / Cloudflare Aura-2 commander speech
@@ -452,11 +456,8 @@ is on fire.
 
 - Cooldowns are per-nation but not surfaced in the UI — an agent's unavailable tools are
   invisible to you. The same is true of what it cannot afford.
-- No ELO. One match per websocket connection, and no harness yet for scoring model A
-  against model B over a run of matches with the chairs swapped, which is the obvious thing
-  to do with three chairs. Matches are recorded and replayable, which is half of it.
-- The arbiter is injectable in principle: a commander that writes its rationale to persuade
-  the *arbiter* rather than justify its action is playing a different game. Unhandled.
+- No ELO. One match per websocket connection, and no harness yet for scoring pinned Jev
+  versions over batches. Matches are recorded and replayable, which is half of it.
 - Against the scripted reference policy over 40 seeded matches: Aurelia loses 17, Korsav
   loses 9, and 14 end without a loser. Aurelia still dies of her own streets more often
   than Korsav dies of an empty treasury, which is the designed asymmetry, but the split is

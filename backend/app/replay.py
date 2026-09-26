@@ -204,7 +204,7 @@ class Recording:
 
     @property
     def panel(self) -> Dict[str, str]:
-        """The three chairs that actually produced this transcript, not today's."""
+        """The dialogue voices and Arbiter that produced this transcript, not today's."""
         return {
             side: str(self.meta.get(f"{side}_model") or self.meta.get("nation_model") or "mock")
             for side in ("west", "east")

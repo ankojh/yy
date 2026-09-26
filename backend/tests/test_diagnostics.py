@@ -138,9 +138,11 @@ def test_logs_never_contain_the_api_key(tmp_path, monkeypatch):
 def test_dev_view_streams_sanitized_traces_outside_the_replay_log(monkeypatch):
     streamed = []
     secret = "sk-test-must-never-cross-the-socket"
+    typesafe_secret = "tsf-test-must-never-cross-the-socket"
     monkeypatch.setattr("app.config.settings.app_env", "development")
     monkeypatch.setattr("app.config.settings.llm_debug", True)
     monkeypatch.setattr("app.config.settings.openai_api_key", secret)
+    monkeypatch.setattr("app.config.settings.typesafe_api_key", typesafe_secret)
 
     async def emit(event):
         streamed.append(event)
@@ -156,7 +158,12 @@ def test_dev_view_streams_sanitized_traces_outside_the_replay_log(monkeypatch):
             "content": {
                 "messages": [{"role": "user", "content": "private state"}],
                 "api_key": secret,
-                "nested": {"message": f"request accidentally contained {secret}"},
+                "typesafe_api_key": typesafe_secret,
+                "nested": {
+                    "message": (
+                        f"request accidentally contained {secret} and {typesafe_secret}"
+                    )
+                },
                 "headers": {"set-cookie": "transient-cookie-value"},
             },
         })
@@ -173,8 +180,10 @@ def test_dev_view_streams_sanitized_traces_outside_the_replay_log(monkeypatch):
     traces = [event for event in streamed if event.type == "llm_trace"]
     assert [event.payload["direction"] for event in traces] == ["sent", "received"]
     assert traces[0].payload["content"]["api_key"] == "[redacted]"
+    assert traces[0].payload["content"]["typesafe_api_key"] == "[redacted]"
     assert traces[0].payload["content"]["headers"]["set-cookie"] == "[redacted]"
     assert secret not in traces[0].model_dump_json()
+    assert typesafe_secret not in traces[0].model_dump_json()
     assert traces[1].payload["elapsed_ms"] is not None
     assert not [event for event in game.log if event.type == "llm_trace"]
 

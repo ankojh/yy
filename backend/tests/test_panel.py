@@ -1,13 +1,4 @@
-"""Three chairs, three models.
-
-One model playing both nations and then judging itself is not a war; it is a model
-talking to itself. Whatever came out of that was a property of the model rather than of
-the balance. These tests hold the separation in place — and hold the escape hatches
-open, because a controlled single-model run is a legitimate experiment and swapping the
-pairing is the only way to tell a model's skill from its chair.
-"""
-
-import importlib
+"""Jev decision authority and OpenAI dialogue voices remain independently configurable."""
 
 import pytest
 
@@ -17,52 +8,70 @@ from app.agents import _response_controls
 
 def settings_with(monkeypatch, **env):
     """A fresh Settings built from a chosen environment."""
-    for key in ("APP_ENV", "NATION_MODEL", "WEST_MODEL", "EAST_MODEL", "ARBITER_MODEL",
-                "SWAP_MODELS", "MOCK", "OPENAI_API_KEY"):
+    for key in ("APP_ENV", "NATION_MODEL", "WEST_MODEL", "EAST_MODEL", "JEV_MODEL",
+                "SWAP_MODELS", "MOCK", "OPENAI_API_KEY", "TYPESAFE_API_KEY"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return config.Settings()
 
 
-@pytest.fixture(autouse=True)
-def _restore():
-    """Every test here reloads the config module, so put it back for everyone else."""
-    yield
-    importlib.reload(config)
-
-
-def test_the_two_commanders_are_never_the_same_model(monkeypatch):
-    """The separation that actually matters. One model reading both briefs reaches for
-    the same tool twice and the war stops having two sides."""
+def test_the_two_islands_default_to_different_dialogue_voices(monkeypatch):
     live = settings_with(monkeypatch, OPENAI_API_KEY="sk-test")
     assert live.model_for("west") != live.model_for("east")
 
 
-def test_every_chair_is_in_the_same_price_tier():
-    """The experiment is about the models, not about who paid more. All three have to be
-    cheap enough that the pairing is the only variable."""
-    for model in config.DEFAULT_PANEL.values():
-        assert "nano" in model or "mini" in model
+def test_the_referee_is_not_a_commander_model():
+    assert config.DEFAULT_PANEL["arbiter"].startswith("jev-")
+    assert config.DEFAULT_PANEL["arbiter"] not in {
+        config.DEFAULT_PANEL["west"], config.DEFAULT_PANEL["east"]
+    }
 
 
-def test_development_uses_the_openai_panel(monkeypatch):
-    live = settings_with(monkeypatch, APP_ENV="development", OPENAI_API_KEY="sk-test")
+def test_development_uses_the_mixed_provider_panel(monkeypatch):
+    live = settings_with(
+        monkeypatch, APP_ENV="development",
+        OPENAI_API_KEY="sk-test", TYPESAFE_API_KEY="tsf-test",
+    )
     assert not live.use_mock
+    assert not live.use_mock_decisions
+    assert not live.use_mock_dialogue
+    assert not live.use_mock_arbiter
     assert live.panel == config.DEFAULT_PANEL
 
 
 def test_a_key_free_hosted_run_puts_the_scripted_policy_in_every_chair(monkeypatch):
     # Empty rather than absent: config loads backend/.env, which on a developer machine
     # has a real key in it, and dotenv fills in any name that is missing entirely.
-    offline = settings_with(monkeypatch, OPENAI_API_KEY="")
+    offline = settings_with(monkeypatch, OPENAI_API_KEY="", TYPESAFE_API_KEY="")
     assert offline.use_mock
+    assert offline.use_mock_decisions
+    assert offline.use_mock_dialogue
+    assert offline.use_mock_arbiter
     assert offline.panel == {"west": "mock", "east": "mock", "arbiter": "mock"}
 
 
+def test_provider_keys_fall_back_independently(monkeypatch):
+    dialogue_only = settings_with(
+        monkeypatch, OPENAI_API_KEY="sk-test", TYPESAFE_API_KEY=""
+    )
+    assert dialogue_only.panel["west"] != "mock"
+    assert dialogue_only.panel["arbiter"] == "mock"
+    assert dialogue_only.use_mock_decisions
+    assert not dialogue_only.use_mock_dialogue
+
+    jev_only = settings_with(
+        monkeypatch, OPENAI_API_KEY="", TYPESAFE_API_KEY="tsf-test"
+    )
+    assert jev_only.panel["west"] == "mock"
+    assert jev_only.panel["east"] == "mock"
+    assert jev_only.panel["arbiter"] == "jev-latest"
+    assert not jev_only.use_mock_decisions
+    assert jev_only.use_mock_dialogue
+
+
 def test_nation_model_still_overrides_both_chairs(monkeypatch):
-    """The escape hatch: a controlled run where the only difference between the two
-    countries is the country."""
+    """A controlled run can use the same public voice for both countries."""
     same = settings_with(
         monkeypatch, OPENAI_API_KEY="sk-test", NATION_MODEL="gpt-5-nano",
     )
@@ -70,8 +79,7 @@ def test_nation_model_still_overrides_both_chairs(monkeypatch):
 
 
 def test_the_pairing_can_be_reversed(monkeypatch):
-    """Leaving it fixed makes one model permanently the rich republic, which is a bias
-    of its own. A run scored both ways round is the only honest one."""
+    """Voice assignment can be reversed without changing Jev's decision model."""
     straight = settings_with(monkeypatch, OPENAI_API_KEY="sk-test")
     swapped = settings_with(
         monkeypatch, OPENAI_API_KEY="sk-test", SWAP_MODELS="1"
@@ -94,13 +102,12 @@ def test_a_sampling_model_still_gets_its_temperature(model):
     assert _response_controls(model, 0.4) == {"temperature": 0.4}
 
 
-def test_swapping_moves_the_arbiters_family_to_the_other_chair(monkeypatch):
-    """The referee shares a family with one commander to keep it cheap. Swapping is what
-    makes that acceptable: run it both ways and the shared family cancels out."""
-    straight = settings_with(monkeypatch, OPENAI_API_KEY="sk-test")
-    swapped = settings_with(
-        monkeypatch, OPENAI_API_KEY="sk-test", SWAP_MODELS="1"
+def test_swapping_never_changes_the_independent_referee(monkeypatch):
+    straight = settings_with(
+        monkeypatch, OPENAI_API_KEY="sk-test", TYPESAFE_API_KEY="tsf-test"
     )
-    shared = straight.panel["arbiter"]
-    sides = {s for s in ("west", "east") if straight.model_for(s) == shared}
-    assert sides and {s for s in ("west", "east") if swapped.model_for(s) == shared} != sides
+    swapped = settings_with(
+        monkeypatch, OPENAI_API_KEY="sk-test", TYPESAFE_API_KEY="tsf-test",
+        SWAP_MODELS="1",
+    )
+    assert straight.panel["arbiter"] == swapped.panel["arbiter"] == "jev-latest"

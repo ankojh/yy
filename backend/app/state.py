@@ -312,7 +312,10 @@ class Action(BaseModel):
     # Diagnostics: where this decision actually came from, so a transcript can never
     # be misread as model behaviour when it was really the scripted fallback.
     source: Literal["live", "mock", "fallback"] = "mock"
+    # Jev chooses the move; a separate OpenAI model may only voice it.
     model: str = ""
+    dialogue_model: str = ""
+    decision_confidence: float = 0.0
     # A short structured label, never free-form reasoning traces.
     intent: str = ""
     legal: List[str] = Field(default_factory=list)

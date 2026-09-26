@@ -80,6 +80,16 @@ function appendBlock(host: HTMLElement, title: string, value: unknown) {
 function appendPayload(host: HTMLElement, trace: DevTrace) {
   const content = trace.content;
   if (trace.direction === "sent" && isRecord(content)) {
+    if (trace.provider === "typesafe") {
+      appendBlock(host, "Decision state", content.state);
+      appendBlock(host, "Typed questions", content.questions);
+      appendBlock(host, "Raw Jev request", {
+        method: trace.method ?? "POST",
+        endpoint: trace.endpoint ?? "/v1/systemone",
+        body: content,
+      });
+      return;
+    }
     if (Array.isArray(content.messages)) {
       for (const message of content.messages) {
         const role = isRecord(message) ? String(message.role ?? "message") : "message";
@@ -106,6 +116,17 @@ function appendPayload(host: HTMLElement, trace: DevTrace) {
     return;
   }
   if (trace.direction === "received" && isRecord(content)) {
+    if (trace.provider === "typesafe") {
+      appendBlock(host, "Locked decision", content.decision);
+      const normalized = Object.fromEntries(
+        Object.entries(content).filter(([key]) =>
+          !["decision", "jev_response"].includes(key)
+        )
+      );
+      if (Object.keys(normalized).length) appendBlock(host, "Normalized result", normalized);
+      appendBlock(host, "Raw Jev response", content.jev_response ?? content);
+      return;
+    }
     if (content.object === "response" || Array.isArray(content.output)) {
       appendBlock(host, "Raw OpenAI response", content);
       return;
@@ -173,11 +194,18 @@ function clipped(value: unknown, length = 130): string {
 }
 
 function actionDigest(content: unknown): string | null {
+  const decision = isRecord(content) && isRecord(content.decision)
+    ? content.decision : null;
   const call = functionCall(content);
-  if (!call) return null;
-  const args = parseRecord(call.arguments) ??
-    (isRecord(call.arguments) ? call.arguments : {}) ?? {};
-  const action = String(args.action ?? call.name ?? "action");
+  if (!decision && !call) {
+    const output = outputRecord(content);
+    return output?.message ? `Dialogue — “${clipped(output.message, 96)}”` : null;
+  }
+  const args = decision
+    ? (isRecord(decision.arguments) ? decision.arguments : {})
+    : parseRecord(call!.arguments) ??
+      (isRecord(call!.arguments) ? call!.arguments : {}) ?? {};
+  const action = String(decision?.action ?? args.action ?? call?.name ?? "action");
   const details: string[] = [];
   for (const key of ["weapon", "target", "domain", "resource"]) {
     if (args[key] != null) details.push(words(args[key]));
@@ -199,9 +227,11 @@ function rulingDigest(content: unknown): string | null {
 
 function digestFor(trace: DevTrace): string {
   if (trace.direction === "sent") {
+    if (trace.stage === "dialogue") return "Writing dialogue for the locked action";
+    if (trace.stage === "terms") return "Choosing a typed stance for each clause";
     return trace.agent === "arbiter"
       ? "Reviewing both declared actions against the true game state"
-      : `Choosing the next action · ${trace.chain_reset === false ? "continuing context" : "fresh context"}`;
+      : "Choosing the next legal action from private island state";
   }
   if (trace.direction === "received") {
     return (trace.agent === "arbiter" ? rulingDigest(trace.content) : actionDigest(trace.content))
@@ -286,9 +316,10 @@ function render() {
   }
 
   const latest = traces[active][traces[active].length - 1];
-  const model = panel[active] ?? latest?.model ?? "waiting for first request";
+  const model = latest?.model ?? panel[active] ?? "waiting for first request";
+  const activeProvider = latest?.provider ?? provider ?? "openai";
   $("dev-agent-name").textContent = label(active);
-  $("dev-model").textContent = `${provider || "openai"} · ${model}`;
+  $("dev-model").textContent = `${activeProvider} · ${model}`;
 
   const host = $("dev-stream");
   const wasNearBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 80;

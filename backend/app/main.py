@@ -45,12 +45,14 @@ class SpeechRequest(BaseModel):
 
 @app.get("/health")
 async def health():
-    # `panel` rather than a single model: there are three chairs now, and which model is
-    # in which one is the first thing you want to know about a running instance.
+    # Report decision, dialogue, and referee fallbacks independently.
     return {
         "ok": True,
         "service": "yudhyantra",
         "mock": settings.use_mock,
+        "decision_mock": settings.use_mock_decisions,
+        "dialogue_mock": settings.use_mock_dialogue,
+        "arbiter_mock": settings.use_mock_arbiter,
         "panel": settings.panel,
         "replay": settings.replay or None,
         "audio": {

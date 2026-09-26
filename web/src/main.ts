@@ -147,7 +147,7 @@ function connect() {
       replay = ev.payload.replay ?? null;
       renderReplay(replay);
       configureDevView(ev.payload);
-      // Reference data: the three chairs, and the names of the disputed clauses. Sent
+      // Reference data: the two dialogue voices, Arbiter, and disputed clauses. Sent
       // once and held, because every panel below needs it and none of them owns it.
       setReference(ev.payload.panel ?? {}, ev.payload.articles ?? {});
       quarrel = { partition: ev.payload.partition ?? [], accounts: ev.payload.accounts ?? {} };

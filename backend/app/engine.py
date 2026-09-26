@@ -1,6 +1,6 @@
 """Deterministic mechanics.
 
-The split that matters: this file owns every number. The arbiter LLM only ever returns a
+The split that matters: this file owns every number. The Jev Arbiter only ever returns a
 bounded modifier and a judgment call, which get applied here. A model can never invent a
 state change, so a hallucination costs you flavor, not integrity of the simulation.
 
