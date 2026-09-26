@@ -35,18 +35,25 @@ class Settings:
         # declarations. Both keys stay backend-only; either lane falls back independently.
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
         self.typesafe_api_key = os.getenv("TYPESAFE_API_KEY", "").strip()
-        # Neural speech is deliberately separate from the game models: Cloudflare's
-        # Workers AI free allocation can voice the bench without spending OpenAI tokens.
-        # Both credentials remain backend-only; the browser calls our /speech proxy.
+        # Neural speech is deliberately separate from the game models. Provider credentials
+        # remain backend-only; the browser calls our /speech proxy.
         self.cloudflare_account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
         self.cloudflare_api_token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
         self.tts_voice_west = os.getenv("TTS_VOICE_WEST", "atlas").strip() or "atlas"
         self.tts_voice_east = os.getenv("TTS_VOICE_EAST", "jupiter").strip() or "jupiter"
-        # Eleven v3 understands performance tags such as [angry] and [shouts]. It is
-        # preferred when configured; Aura-2 remains the provider fallback.
-        self.elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
-        self.elevenlabs_voice_west = os.getenv("ELEVENLABS_VOICE_WEST", "").strip()
-        self.elevenlabs_voice_east = os.getenv("ELEVENLABS_VOICE_EAST", "").strip()
+        # Azure Speech is preferred when configured; Aura-2 remains the provider fallback.
+        # These standard neural voices both support the angry speaking style used by the
+        # commander dialogue.
+        self.azure_speech_key = os.getenv("AZURE_SPEECH_KEY", "").strip()
+        self.azure_speech_region = os.getenv("AZURE_SPEECH_REGION", "").strip().lower()
+        self.azure_speech_voice_west = (
+            os.getenv("AZURE_SPEECH_VOICE_WEST", "en-US-JennyNeural").strip()
+            or "en-US-JennyNeural"
+        )
+        self.azure_speech_voice_east = (
+            os.getenv("AZURE_SPEECH_VOICE_EAST", "en-US-GuyNeural").strip()
+            or "en-US-GuyNeural"
+        )
         # NATION_MODEL, if set, gives both islands the same dialogue voice.
         both = os.getenv("NATION_MODEL", "")
         self.west_model = os.getenv("WEST_MODEL", both or DEFAULT_PANEL["west"])
@@ -119,13 +126,9 @@ class Settings:
 
     @property
     def use_neural_tts(self) -> bool:
-        eleven = bool(
-            self.elevenlabs_api_key
-            and self.elevenlabs_voice_west
-            and self.elevenlabs_voice_east
-        )
+        azure = bool(self.azure_speech_key and self.azure_speech_region)
         cloudflare = bool(self.cloudflare_account_id and self.cloudflare_api_token)
-        return eleven or cloudflare
+        return azure or cloudflare
 
 
 settings = Settings()

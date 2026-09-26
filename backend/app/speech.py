@@ -1,4 +1,4 @@
-"""Cached Cloudflare Aura-2 speech synthesis.
+"""Cached Azure Speech synthesis with a Cloudflare Aura-2 fallback.
 
 The browser never sees provider credentials. Identical replay lines share the same bytes,
 which keeps the free allocation useful instead of regenerating speech after every seek.
@@ -9,6 +9,7 @@ import json
 from collections import OrderedDict
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from xml.sax.saxutils import escape, quoteattr
 
 
 class SpeechUnavailable(RuntimeError):
@@ -17,7 +18,7 @@ class SpeechUnavailable(RuntimeError):
 
 class SpeechService:
     CLOUDFLARE_MODEL = "@cf/deepgram/aura-2-en"
-    ELEVEN_MODEL = "eleven_v3"
+    AZURE_OUTPUT_FORMAT = "audio-16khz-128kbitrate-mono-mp3"
 
     def __init__(
         self,
@@ -25,27 +26,30 @@ class SpeechService:
         api_token: str,
         voices: dict[str, str],
         cache_size: int = 128,
-        elevenlabs_api_key: str = "",
-        elevenlabs_voices: dict[str, str] | None = None,
+        azure_speech_key: str = "",
+        azure_speech_region: str = "",
+        azure_speech_voices: dict[str, str] | None = None,
     ) -> None:
         self.account_id = account_id
         self.api_token = api_token
         self.voices = voices
         self.cache_size = cache_size
-        self.elevenlabs_api_key = elevenlabs_api_key
-        self.elevenlabs_voices = elevenlabs_voices or {"west": "", "east": ""}
+        self.azure_speech_key = azure_speech_key
+        self.azure_speech_region = azure_speech_region
+        self.azure_speech_voices = azure_speech_voices or {"west": "", "east": ""}
         self._cache: OrderedDict[str, bytes] = OrderedDict()
 
     @property
     def configured(self) -> bool:
-        return self.elevenlabs_configured or self.cloudflare_configured
+        return self.azure_configured or self.cloudflare_configured
 
     @property
-    def elevenlabs_configured(self) -> bool:
+    def azure_configured(self) -> bool:
         return bool(
-            self.elevenlabs_api_key
-            and self.elevenlabs_voices.get("west")
-            and self.elevenlabs_voices.get("east")
+            self.azure_speech_key
+            and self.azure_speech_region
+            and self.azure_speech_voices.get("west")
+            and self.azure_speech_voices.get("east")
         )
 
     @property
@@ -54,8 +58,8 @@ class SpeechService:
 
     @property
     def provider(self) -> str:
-        if self.elevenlabs_configured:
-            return "elevenlabs-v3"
+        if self.azure_configured:
+            return "azure-speech"
         if self.cloudflare_configured:
             return "cloudflare-aura-2"
         return "unconfigured"
@@ -71,8 +75,8 @@ class SpeechService:
         spoken = text.strip()
         provider = self.provider
         voice = (
-            self.elevenlabs_voices.get(side, self.elevenlabs_voices.get("west", ""))
-            if provider == "elevenlabs-v3"
+            self.azure_speech_voices.get(side, self.azure_speech_voices.get("west", ""))
+            if provider == "azure-speech"
             else self.voices.get(side, self.voices["west"])
         )
         key = hashlib.sha256(f"{provider}\0{voice}\0{spoken}".encode()).hexdigest()
@@ -81,9 +85,9 @@ class SpeechService:
             self._cache.move_to_end(key)
             return cached
 
-        if provider == "elevenlabs-v3":
+        if provider == "azure-speech":
             try:
-                audio = self._elevenlabs(voice, spoken)
+                audio = self._azure(voice, spoken)
             except SpeechUnavailable:
                 if not self.cloudflare_configured:
                     raise
@@ -99,22 +103,29 @@ class SpeechService:
             self._cache.popitem(last=False)
         return audio
 
-    def _elevenlabs(self, voice: str, spoken: str) -> bytes:
+    def _azure(self, voice: str, spoken: str) -> bytes:
         url = (
-            f"https://api.elevenlabs.io/v1/text-to-speech/{voice}"
-            "?output_format=mp3_44100_128"
+            f"https://{self.azure_speech_region}.tts.speech.microsoft.com"
+            "/cognitiveservices/v1"
         )
-        # Eleven v3 interprets these as direction, not as words to narrate.
-        payload = json.dumps(
-            {"text": f"[angry] [shouts] {spoken}", "model_id": self.ELEVEN_MODEL}
-        ).encode()
+        # Jenny and Guy support Azure's angry speaking style. Escape both the text and
+        # voice attribute so model output and environment values cannot break the SSML.
+        payload = (
+            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' "
+            "xmlns:mstts='https://www.w3.org/2001/mstts' xml:lang='en-US'>"
+            f"<voice name={quoteattr(voice)}>"
+            f"<mstts:express-as style='angry'>{escape(spoken)}</mstts:express-as>"
+            "</voice></speak>"
+        ).encode("utf-8")
         request = Request(
             url,
             data=payload,
             method="POST",
             headers={
-                "xi-api-key": self.elevenlabs_api_key,
-                "Content-Type": "application/json",
+                "Ocp-Apim-Subscription-Key": self.azure_speech_key,
+                "Content-Type": "application/ssml+xml",
+                "X-Microsoft-OutputFormat": self.AZURE_OUTPUT_FORMAT,
+                "User-Agent": "yudhyantra",
                 "Accept": "audio/mpeg",
             },
         )

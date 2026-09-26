@@ -23,7 +23,8 @@ join a side.
 
 The split that keeps it honest: `engine.py` owns every number. For each island, the server
 enumerates legal actions and Jev chooses one from that closed set using only that island's
-private view. OpenAI then receives the locked action and may return only its dialogue.
+private view. OpenAI then receives the locked action and may return only one or two short,
+direct sentences addressed to the opposing island.
 Separately, Jev answers the Arbiter's concrete questions—coherent, adaptive, overstated,
 exploiting a weakness, condemnation and tension—and server code computes the `-2..+2`
 modifier and `effective` flag. Results are still clamped before reaching the simulation.
@@ -299,8 +300,8 @@ network, or generation cost. It loops from briefing through the end state and im
 pauses whenever the tab or browser window loses focus. “Imminent Threat” by Matthew Pablo
 is used under CC BY-SA 3.0; full asset details are in `web/public/audio/LICENSE.md`.
 
-Commander statements prefer ElevenLabs v3, where `[angry] [shouts]` directs an aggressive
-performance. Cloudflare Aura-2 is the second provider. Both hosted providers are optional,
+Commander statements prefer Azure Speech with its `angry` SSML speaking style. Cloudflare
+Aura-2 is the second provider. Both hosted providers are optional,
 backend-only, and separately cached; neither uses OpenAI tokens. If a hosted provider is
 unconfigured, unavailable, or out of quota, the same queue falls back to browser speech so
 the second island never loses its turn. Audio starts only after user interaction. Live
@@ -384,9 +385,10 @@ list above — the price of a bench made of one real war instead of five picked 
 | `APP_ENV` | `development` | controls development diagnostics defaults |
 | `OPENAI_API_KEY` | — | required for live dialogue only; absent ⇒ deterministic dialogue |
 | `TYPESAFE_API_KEY` | — | required for live island decisions and Arbiter; absent ⇒ local policy/referee fallbacks |
-| `ELEVENLABS_API_KEY` | — | optional preferred neural TTS; free plan includes limited characters |
-| `ELEVENLABS_VOICE_WEST` | — | ElevenLabs voice ID for Aurelia |
-| `ELEVENLABS_VOICE_EAST` | — | ElevenLabs voice ID for Korsav |
+| `AZURE_SPEECH_KEY` | — | optional preferred neural TTS; use either key from the Speech resource |
+| `AZURE_SPEECH_REGION` | — | Speech resource region, such as `northcentralus` |
+| `AZURE_SPEECH_VOICE_WEST` | `en-US-JennyNeural` | Azure voice for Aurelia |
+| `AZURE_SPEECH_VOICE_EAST` | `en-US-GuyNeural` | Azure voice for Korsav |
 | `CLOUDFLARE_ACCOUNT_ID` | — | optional Workers AI Aura-2 fallback |
 | `CLOUDFLARE_API_TOKEN` | — | backend-only Workers AI token |
 | `TTS_VOICE_WEST` | `atlas` | Aura-2 fallback voice for Aurelia |
@@ -431,7 +433,7 @@ backend/app/
   agents.py    two private Jev decisions + OpenAI dialogue + Jev Arbiter, with fallbacks
   game.py      ignition dossiers, paced turn loop, event stream
   replay.py    the bench — recordings, turn cuts, jumps, reconstructed pacing
-  speech.py    cached ElevenLabs v3 / Cloudflare Aura-2 commander speech
+  speech.py    cached Azure Speech / Cloudflare Aura-2 commander speech
   main.py      FastAPI websocket
 backend/fixtures/   five recorded matches, committed; see "The bench"
 web/src/

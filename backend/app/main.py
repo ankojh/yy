@@ -29,10 +29,11 @@ speech_service = SpeechService(
     settings.cloudflare_account_id,
     settings.cloudflare_api_token,
     {"west": settings.tts_voice_west, "east": settings.tts_voice_east},
-    elevenlabs_api_key=settings.elevenlabs_api_key,
-    elevenlabs_voices={
-        "west": settings.elevenlabs_voice_west,
-        "east": settings.elevenlabs_voice_east,
+    azure_speech_key=settings.azure_speech_key,
+    azure_speech_region=settings.azure_speech_region,
+    azure_speech_voices={
+        "west": settings.azure_speech_voice_west,
+        "east": settings.azure_speech_voice_east,
     },
 )
 

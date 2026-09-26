@@ -6,6 +6,7 @@ runs offline and a prose failure can never change a locked game action.
 
 import json
 import random
+import re
 from contextvars import ContextVar, Token
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -119,13 +120,13 @@ DOCTRINE = {
 
 
 VOICE = (
-    "Speak in two or three compact sentences, 32–46 words total. Sound like a wartime "
-    "commander addressing an enemy: direct, forceful, and contemptuous when the facts earn "
-    "it. Name what they did, state what you are doing, and finish with a consequence, order, "
-    "or warning. Use hard verbs and active voice; even restraint must sound deliberate and "
-    "dangerous. Never hide behind generic phrases like 'a proportionate response.' No "
-    "preamble, hedging, game mechanics, or empty slogans. Do not exaggerate beyond the move "
-    "you actually chose—the threat must survive the arbiter. You are on the record."
+    "Speak directly to the enemy as 'you.' Write one or two short sentences, 8–24 words "
+    "total. State what you are about to do and what they should expect. For an attack, name "
+    "the attack or target and make the immediate threat clear. For any other move, give a "
+    "direct warning, demand, or consequence tied to that move. Use hard verbs and active "
+    "voice. Do not explain your strategy, reasoning, decision process, the wider situation, "
+    "or what anyone is doing behind the scenes. No narration, analysis, preamble, hedging, "
+    "game mechanics, generic slogans, or threats the locked action cannot support."
 )
 
 
@@ -135,10 +136,18 @@ def _client():
     return AsyncOpenAI(api_key=settings.openai_api_key)
 
 
-def _trim(text: str, words: int = 48) -> str:
-    """Bubbles break if a model ignores the word limit. Enforce it here, not in the prompt."""
-    parts = (text or "").strip().split()
+def _trim(text: str, words: int = 48, sentences: Optional[int] = None) -> str:
+    """Bound generated copy even when a model ignores its prompt."""
+    clean = " ".join((text or "").strip().split())
+    if sentences is not None:
+        clean = " ".join(re.split(r"(?<=[.!?])\s+", clean)[:sentences])
+    parts = clean.split()
     return " ".join(parts[:words]) + ("…" if len(parts) > words else "")
+
+
+def _trim_dialogue(text: str) -> str:
+    """Commander speech gets at most two sentences and 24 words."""
+    return _trim(text, words=24, sentences=2)
 
 
 # --------------------------------------------------------------------------- nation agent
@@ -662,7 +671,7 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
         # Drawn from the seeded RNG, so a transcript reads like a war rather than a
         # loop, and a given seed still replays identically.
         return Action(side=side, tool=tool,
-                      args={**args, "message": _rng.choice(MOCK_LINES[line])},
+                      args={**args, "message": _trim_dialogue(_rng.choice(MOCK_LINES[line]))},
                       intent=intent, reasoning=why)
 
     if "surrender" in legal and (me.integrity < 18 or me.unrest > 92):
@@ -1059,7 +1068,8 @@ def _dialogue_developer_prompt(side: str) -> str:
         VOICE,
         (
             "Jev has already made the action below and the server has locked it. Write only "
-            "the public declaration that accompanies that exact action. You may not choose, "
+            "the words this commander says directly to the enemy with that exact action. "
+            "Do not summarize the brief or comment on the simulation. You may not choose, "
             "replace, soften, expand, or add an action. Do not mention Jev, a model, a game, "
             "structured data, or hidden state. Return the requested JSON object only."
         ),
@@ -1072,7 +1082,7 @@ DIALOGUE_RESPONSE_FORMAT: Dict[str, Any] = {
     "strict": True,
     "schema": {
         "type": "object",
-        "properties": {"message": {"type": "string"}},
+        "properties": {"message": {"type": "string", "maxLength": 180}},
         "required": ["message"],
         "additionalProperties": False,
     },
@@ -1239,7 +1249,7 @@ def _validated_response_action(
             raise ValueError(f"{tool}.{key} contains an unknown option")
 
     if "message" in args:
-        args["message"] = _trim(str(args["message"]))
+        args["message"] = _trim_dialogue(str(args["message"]))
     intent = str(args.pop("intent", ""))[:24]
     return Action(
         side=side, tool=tool, args=args, intent=intent,
@@ -1497,7 +1507,7 @@ async def _write_dialogue(state: GameState, side: str, action: Action, model: st
             },
         ],
         "text": {"format": DIALOGUE_RESPONSE_FORMAT},
-        "prompt_cache_key": f"yudhyantra:dialogue:{side}:v1:{model}",
+        "prompt_cache_key": f"yudhyantra:dialogue:{side}:v2:{model}",
         "store": False,
         **_response_controls(model, temperature=1.0),
     }
@@ -1522,13 +1532,13 @@ async def _write_dialogue(state: GameState, side: str, action: Action, model: st
         response_id=str(_read(response, "id", "")),
         **_usage_payload(response, model),
     )
-    return _trim(message)
+    return _trim_dialogue(message)
 
 
 def _fallback_dialogue(action: Action) -> str:
     existing = str(action.args.get("message", "")).strip()
     if existing:
-        return _trim(existing)
+        return _trim_dialogue(existing)
     line = {
         "strike": "nuke" if action.args.get("weapon") == "nuke" else "strike",
         "blockade": "blockade",
@@ -1546,7 +1556,7 @@ def _fallback_dialogue(action: Action) -> str:
         "surrender": "surrender",
         "hold": "hold",
     }.get(action.tool, "hold")
-    return _trim(_rng.choice(MOCK_LINES[line]))
+    return _trim_dialogue(_rng.choice(MOCK_LINES[line]))
 
 
 async def decide(state: GameState, side: str) -> Action:

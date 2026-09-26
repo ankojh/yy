@@ -9,10 +9,13 @@ from app.config import settings
 from app.state import Action, initial_state
 
 
-def test_commander_statement_guard_allows_longer_declarations():
-    statement = " ".join(f"word{index}" for index in range(48))
-    assert agents._trim(statement) == statement
-    assert agents._trim(statement + " word48 word49") == statement + "…"
+def test_commander_statement_guard_enforces_two_short_sentences():
+    statement = " ".join(f"word{index}" for index in range(24))
+    assert agents._trim_dialogue(statement) == statement
+    assert agents._trim_dialogue(statement + " word24 word25") == statement + "…"
+    assert agents._trim_dialogue("You crossed the line. We strike tonight. Expect fire.") == (
+        "You crossed the line. We strike tonight."
+    )
 
 
 def response(response_id: str, message: str = "We hold."):
@@ -107,6 +110,11 @@ def test_jev_locks_action_and_openai_only_writes_dialogue(monkeypatch):
     assert "previous_response_id" not in request
     assert request["store"] is False
     assert request["text"]["format"]["name"] == "commander_dialogue"
+    assert request["text"]["format"]["schema"]["properties"]["message"]["maxLength"] == 180
+    developer_prompt = request["input"][0]["content"]
+    assert "one or two short sentences, 8–24 words" in developer_prompt
+    assert "Do not explain your strategy" in developer_prompt
+    assert "directly to the enemy" in developer_prompt
     locked = json.loads(request["input"][1]["content"])["locked_action"]
     assert locked == {"action": "fortify", "arguments": {"domain": "naval"}}
 

@@ -335,12 +335,13 @@ def strike_pressure(weapon: str, target: str) -> float:
 
 MESSAGE = {
     "type": "string",
+    "maxLength": 180,
     "description": (
         "What you say aloud this turn, shown to the world and to your enemy. "
-        "Two or three compact sentences, 32–46 words total. Direct, hostile, and specific: "
-        "name the provocation, declare the move, and end with a consequence or warning. "
-        "Use hard verbs and active voice. No preamble, hedging, generic slogans, mechanics, "
-        "or threats the chosen action cannot support."
+        "Address the enemy as 'you' in one or two short sentences, 8–24 words total. Say "
+        "what you will do and what they should expect. Use hard verbs and active voice. "
+        "No narration, strategic explanation, decision-process commentary, preamble, "
+        "hedging, mechanics, generic slogans, or threats the chosen action cannot support."
     ),
 }
 
