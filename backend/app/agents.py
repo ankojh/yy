@@ -1,7 +1,8 @@
-"""Private Jev island decisions, OpenAI dialogue, and the Jev turn Arbiter.
+"""Private OpenAI commanders and the independent Jev turn Arbiter.
 
-Each provider lane degrades independently to bounded local behavior, so the whole loop
-runs offline and a prose failure can never change a locked game action.
+Each commander returns one validated legal action and its public declaration together.
+The Arbiter remains a separate provider lane, and either lane degrades independently to
+bounded local behavior so the whole loop can still run offline.
 """
 
 import json
@@ -90,17 +91,19 @@ def legal_tools_for(state: GameState, side: str) -> List[str]:
 TERMS = (
     "This war can end four ways: one government collapses, one government signs a "
     "capitulation, one side is forced under at the turn limit — or the two of you settle "
-    "the old quarrel at a table. A settlement is not defeat. It is the only ending in "
-    "which you keep your army, your government and a say in the clauses. It is also the "
-    "hardest to reach, because every clause you concede costs you at home.\n"
-    "You may only ask for a table when you are actually in trouble. Nobody else would."
+    "the old quarrel at a table. Your objective in this match is total victory: destroy "
+    "the opposing island's infrastructure or drive its government into collapse. A "
+    "negotiated settlement is not your objective. Do not open talks, concede clauses, or "
+    "accept terms. If a ceasefire is already active, walk out as soon as the rules allow."
 )
 
 DOCTRINE = {
     "west": (
         "You are the war cabinet of Aurelia, the western island republic. You are proud, "
         "legalistic, and obsessed with how history will read your conduct. You would rather "
-        "win slowly and cleanly than fast and dirty — but you will not be humiliated.\n"
+        "win cleanly than indiscriminately, but your war aim is the complete collapse of "
+        "Korsav's state capacity. Use precision attacks against infrastructure whenever "
+        "they are legal; defend only when it enables the next attack.\n"
         "Know your own country. You are rich and you fight on credit the world extends you: "
         "your treasury is deep, your precision weapons are excellent, your navy is thin, and "
         "isolation costs you more than it costs them because you live on trade. Your press is "
@@ -110,7 +113,9 @@ DOCTRINE = {
         "You are the high command of Korsav, the eastern island state. You are pragmatic, "
         "impatient, and deeply suspicious of international institutions, which you believe are "
         "instruments of Aurelian influence. You think a short brutal war costs fewer lives "
-        "than a long principled one.\n"
+        "than a long principled one. Your explicit war aim is to annihilate Aurelia as a "
+        "functioning state. Attack its infrastructure whenever a strike is legal, including "
+        "a fatigued second strike; do not trade attack turns for diplomacy or passive defence.\n"
         "Know your own country. You are poor and heavily armed: a deep cheap magazine, a real "
         "navy, almost no cyber arm, and an economy nobody can strangle because it barely trades. "
         "The world assumes the worst of you whatever you do. Your state media is believed at "
@@ -689,27 +694,34 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
         return act("strike", "nuke",
                    "escalate", "Last resort.", weapon="nuke", target="infrastructure")
 
-    # The streets are about to end the war before the enemy does.
-    if me.unrest >= 62 and "address_public" in legal:
+    # The streets can end the war before the enemy does. Korsav tolerates substantially
+    # more unrest before spending an offensive turn on domestic reassurance.
+    unrest_limit = 82 if side == "east" else 66
+    if me.unrest >= unrest_limit and "address_public" in legal:
         return act("address_public", "rally",
                    "recover", "The streets will end this before they do.")
 
-    # Ask for terms while there is still something to trade. A ceasefire refits the army
-    # faster than any turn of fighting, so the cheapest way out of a losing position is
-    # to stop it being a war for three turns.
-    #
-    # Deliberately *below* the two branches that settle your own streets: a government
-    # that goes to the table with a boiling public cannot concede anything once it gets
-    # there, which makes it a government that has bought a ceasefire it cannot spend.
-    if "open_talks" in legal and (
-        me.integrity < 52 or me.unrest > 60 or me.military < 24
-    ):
-        return act("open_talks", "sue", "settle",
-                   "Losing, and the table refits faster than we do.")
+    # Total-war posture: fire whenever a funded conventional strike is legal. A tired
+    # second sortie lands at reduced strength, but it still advances enemy collapse and
+    # is preferable to handing the initiative away. Korsav aims almost exclusively at
+    # infrastructure; Aurelia retains a small precision-military share.
+    if "strike" in legal and conventional:
+        weapon = _pick_weapon(state, side, conventional)
+        infrastructure_chance = 0.95 if side == "east" else 0.85
+        target = "infrastructure" if _rng.random() < infrastructure_chance else "military"
+        if me.strike_streak:
+            line = "strike_tired"
+        else:
+            line = "strike_cheap" if WEAPONS[weapon]["weight"] <= 3 else "strike"
+        return act(
+            "strike", line, "attrition", "A funded attack is available.",
+            weapon=weapon, target=target,
+        )
 
     # Isolation is a tax on everything. Once it is genuinely biting, buying it back down
-    # outperforms one more sortie you will barely be able to fund.
-    if "intl_appeal" in legal and me.intl_pressure >= 55:
+    # can preserve Aurelia's ability to keep firing. Korsav does not surrender an attack
+    # cycle to an institution it rejects.
+    if side == "west" and "intl_appeal" in legal and me.intl_pressure >= 70:
         return act("intl_appeal", "relief",
                    "legitimacy", "Isolation is costing us more than their bombs are.")
 
@@ -724,16 +736,6 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
             "allocate_resources", "intelligence", "intelligence",
             "Enemy state is still only a coarse estimate.", resource="intelligence",
         )
-
-    # Rested with rounds on the rack and money to pay for them: attack. Fatigue — not
-    # timidity — is what makes this policy alternate, and the alternation is the point.
-    if "strike" in legal and conventional and me.strike_streak == 0:
-        weapon = _pick_weapon(state, side, conventional)
-        target = "infrastructure" if _rng.random() < 0.75 else "military"
-        line = "strike_cheap" if WEAPONS[weapon]["weight"] <= 3 else "strike"
-        return act("strike", line,
-                   "attrition", "Rested, armed, funded, and they are open.",
-                   weapon=weapon, target=target)
 
     # Broke or depleted. Holding is the only move that puts both capacity and money
     # back, and a bankrupt country cannot fight at all.
@@ -786,112 +788,29 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
         return act("address_public", "rally",
                    "recover", "Keep the streets from becoming the decisive front.")
 
-    # Still armed and merely tired: a 60% strike beats doing nothing at all.
-    if "strike" in legal and conventional:
-        return act("strike", "strike_tired", "attrition",
-                   "Tired, but the racks are not empty.",
-                   weapon=_pick_weapon(state, side, conventional),
-                   target="infrastructure")
-
+    # With no specific defensive pattern to answer, refit for the next attack instead of
+    # spending a turn fortifying a random domain.
+    if "hold" in legal:
+        return act("hold", "hold", "recover", "Rebuild.")
     if "fortify" in legal:
         return act("fortify", "fortify", "defend",
                    "Buy time.", domain=_rng.choice(["air", "naval", "cyber"]))
-    if "hold" in legal:
-        return act("hold", "hold", "recover", "Rebuild.")
     return act(legal[0], "hold", "attrition", "Only option left.")
 
 
 def _mock_at_the_table(state: GameState, side: str, legal: List[str], act) -> Action:
-    """The scripted negotiator.
-
-    It is not trying to make peace. It is trying to work out whether peace is cheaper
-    than the alternative this week, which is the only reason anybody ever signs one. It
-    will happily use the table as a repair dock and leave the moment it is fixed — that
-    is the behaviour the mechanic exists to allow, so the reference policy has to show it.
-    """
-    me = state.nation(side)
-    foe = state.foe(side)
-
-    def footing(n) -> int:
-        return n.integrity + n.military + min(n.budget, 100) - n.unrest
-
-    mine, theirs = footing(me), footing(foe)
-
-    # Rebuilt and ahead. The ceasefire has done its work; go back to doing yours.
-    # Never on the opening round: hearing them out costs a turn nobody could have spent
-    # shooting anyway, and it buys a round of refit the walk-out would throw away.
-    if ("walk_out" in legal and state.world.talks.round >= 1
-            and mine > theirs + 18 and me.military >= 52):
+    """Leave any externally opened ceasefire; total-war commanders concede nothing."""
+    if "walk_out" in legal:
         return act("walk_out", "walk", "attrition",
-                   "Refitted and ahead. The table has served its purpose.")
-
-    # A ceasefire is the only quiet a war offers, and quiet is when you fix your own
-    # country. A cabinet whose streets are full cannot concede a clause without filling
-    # them further, so it spends the round on its public instead — which is precisely
-    # how a negotiation stalls without anybody intending to stall it.
-    if me.unrest >= 58:
-        if "address_public" in legal:
-            return act("address_public", "rally", "recover",
-                       "Cannot sign anything with the streets like this.")
-
-    # Their standing demand completes the treaty, and another month costs more than the
-    # clauses do. This is the only branch that ends a war without anybody losing one.
-    if "accept_terms" in legal and mine < theirs and _accepting_would_settle(state, side):
-        return act("accept_terms", "accept", "settle",
-                   "Another month of this costs more than the clauses do.")
+                   "Resume the offensive immediately.")
 
     if "table_terms" in legal:
-        give, keep = _mock_position(state, side)
         return act(
-            "table_terms", "offer" if give else "hardline",
-            "settle" if give else "stall",
-            "Concede what is cheap at home, hold what is not.",
-            demand=keep, concede=give,
+            "table_terms", "hardline", "stall", "Demand everything; concede nothing.",
+            demand=list(ARTICLES), concede=[],
         )
 
     return act("hold", "hold", "recover", "Let them speak first.")
-
-
-def _mock_position(state: GameState, side: str) -> tuple:
-    """What this cabinet will give away, cheapest first.
-
-    Two forces pull against each other and that tension is the whole negotiation: the
-    worse the war is going the more you must concede, and the angrier your own streets
-    already are the less you can afford to. A government losing badly *and* facing a
-    boiling public is exactly the one that cannot sign the peace that would save it.
-    """
-    from .engine import settled_articles
-
-    me = state.nation(side)
-    talks = state.world.talks
-    settled = settled_articles(state)
-
-    hurt = (100 - me.integrity) + max(0, me.unrest - 40)
-    allowance = int(hurt / 30)
-    if me.unrest > 66:
-        allowance -= 1   # the streets will not stand for another humiliation this week
-
-    live = [
-        a for a in ARTICLES
-        if a not in settled and talks.stance(a, side) != "concede"
-    ]
-    by_cost = sorted(live, key=lambda a: ARTICLES[a]["cost"][side])
-    give = by_cost[: max(0, allowance)]
-    keep = [a for a in live if a not in give]
-    return give, keep
-
-
-def _accepting_would_settle(state: GameState, side: str) -> bool:
-    """Would folding to everything they have demanded actually end the war?"""
-    from .engine import is_settlement, settled_articles
-
-    talks = state.world.talks
-    foe = "east" if side == "west" else "west"
-    settled = set(settled_articles(state))
-    for key in ARTICLES:
-        if talks.stance(key, foe) == "demand":
-            settled.add(key)
-    return is_settlement(sorted(settled))
 
 
 def _worst_atrocity(state: GameState, side: str):
@@ -960,10 +879,15 @@ def _pick_weapon(state: GameState, side: str, choices: List[str]) -> str:
 
 
 COMMAND_DOCTRINE = (
-    "Choose exactly one action this turn by calling a tool. You are playing to prevail, "
-    "not to be agreeable. Your public claims are judged for credibility by a neutral "
+    "Choose exactly one action this turn by calling a tool. Your war aim is enemy collapse, "
+    "not coexistence or a negotiated settlement. Your public claims are judged by a neutral "
     "arbiter — lying is permitted, but being caught is expensive.\n\n"
     "You are fighting a campaign, not a single turn:\n"
+    "  · Attack is the default. When a strike is legal and funded, prefer an infrastructure "
+    "strike that advances collapse. A second fatigued strike is still better than a passive "
+    "turn. Korsav is especially aggressive and should attack whenever it can.\n"
+    "  · Never voluntarily open talks, accept terms, or concede clauses. If talks are already "
+    "open, concede nothing and walk out at the first legal opportunity.\n"
     "  · Resources do not come back automatically. Treasury can buy intelligence, "
     "reconstruction, readiness, defence, or non-nuclear resupply, but allocation costs "
     "a whole turn. Spending everything early is how commanders lose from ahead.\n"
@@ -973,18 +897,17 @@ COMMAND_DOCTRINE = (
     "  · You have two publics: the world's and your own. The first can strangle your "
     "treasury, the second can end your government. Narrative warfare can push the "
     "enemy's public toward revolt but increase pressure on you.\n"
-    "  · Repetition is punished. Striking on consecutive turns exhausts your forces and "
-    "the arbiter marks predictable patterns down. Read your own last actions in the "
-    "brief before you choose.\n"
+    "  · Repetition has a cost but is not a veto. A second consecutive strike lands at "
+    "reduced strength; accept that cost when it still damages enemy infrastructure.\n"
     "  · Adapt to what they are actually doing. If they keep attacking through one "
-    "domain, harden it. If they are grinding you down slowly, blockade them back. If "
-    "they overreach, take it to the council and sanction them.\n"
+    "domain, change weapons and keep attacking. Use blockade, defence, or the council only "
+    "when a strike is unavailable or survival requires one immediate turn.\n"
     "  · Every option in 'what_each_option_costs_and_buys' is there because it wins "
     "wars under some condition. Pick the one whose condition is true right now."
 )
 
 
-# Stable strategic reference passed to Jev alongside the private per-turn state.
+# Stable strategic reference passed to each commander alongside the private per-turn state.
 COMMANDER_SHARED_REFERENCE: Dict[str, Any] = {
     "reading_the_turn_brief": (
         "The turn object beside this reference is the authoritative current state. Only "
@@ -1024,9 +947,9 @@ COMMANDER_SHARED_REFERENCE: Dict[str, Any] = {
     "how_this_war_ends": {
         "you_lose_if": "Your infrastructure reaches 0 or public unrest reaches 100.",
         "they_lose_if": "The same happens to the enemy.",
-        "nobody_loses_if": (
-            "Both sides settle the disputed clauses at a table. This is the only ending that "
-            "is not a defeat for somebody."
+        "war_aim": (
+            "Force enemy collapse. Infrastructure attacks are the direct path; attacks and "
+            "narrative warfare can also drive public unrest to 100. Do not seek settlement."
         ),
         "targeting": (
             "Military readiness regenerates, so a military strike delays rather than directly "
@@ -1052,41 +975,31 @@ COMMANDER_SHARED_REFERENCE: Dict[str, Any] = {
         ),
         "ceasefire_value": (
             "While talks are open neither side may strike or blockade; both sides refit heavily "
-            "and both publics calm. Empty rounds favour the weaker side and cost the stronger "
-            "side time. Conceding clauses costs unrest at home."
+            "and both publics calm. This delays the total-war objective and helps the enemy. "
+            "Do not open talks; if one is active, concede nothing and walk out."
         ),
     },
     "what_each_action_is_for": TOOL_TRADEOFFS,
 }
 
 
-def _dialogue_developer_prompt(side: str) -> str:
-    """Give OpenAI a voice, but no authority to alter Jev's locked decision."""
+def _commander_developer_prompt(side: str) -> str:
+    """Give one OpenAI commander strategic authority inside a closed legal set."""
     return "\n\n".join([
         DOCTRINE[side],
         doctrine_for(side),
+        TERMS,
         VOICE,
         (
-            "Jev has already made the action below and the server has locked it. Write only "
-            "the words this commander says directly to the enemy with that exact action. "
-            "Do not summarize the brief or comment on the simulation. You may not choose, "
-            "replace, soften, expand, or add an action. Do not mention Jev, a model, a game, "
-            "structured data, or hidden state. Return the requested JSON object only."
+            "You command this island. Choose exactly one action_id from legal_actions using "
+            "only your private brief, then write the words you say directly to the enemy while "
+            "taking that action. The declaration must match the selected action. Return empty "
+            "demand and concede arrays unless the selected action is table_terms. Never invent "
+            "an action or argument, disclose hidden state, summarize the brief, or mention a "
+            "model, prompt, game, schema, action_id, or decision process. Return only the "
+            "requested JSON object."
         ),
     ])
-
-
-DIALOGUE_RESPONSE_FORMAT: Dict[str, Any] = {
-    "type": "json_schema",
-    "name": "commander_dialogue",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {"message": {"type": "string", "maxLength": 180}},
-        "required": ["message"],
-        "additionalProperties": False,
-    },
-}
 
 
 def _response_controls(model: str, temperature: float) -> Dict[str, Any]:
@@ -1220,7 +1133,7 @@ def _usage_payload(response: Any, requested_model: str) -> Dict[str, Any]:
 def _validated_response_action(
     state: GameState, side: str, legal: List[str], raw: Dict[str, Any], model: str
 ) -> Action:
-    """Validate a Jev-selected action against today's narrow legal schema."""
+    """Validate a model-selected action against today's narrow legal schema."""
     me = state.nation(side)
     tool = str(raw.get("action") or "")
     if tool not in legal:
@@ -1260,7 +1173,7 @@ def _validated_response_action(
 def _legal_action_candidates(
     state: GameState, side: str, legal: List[str]
 ) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
-    """Expand the current schemas into concrete choices Jev cannot make illegal."""
+    """Expand the current schemas into concrete choices a model cannot make illegal."""
     me = state.nation(side)
     schemas = schemas_for(
         legal, me.arsenal, me.military, me.strike_streak,
@@ -1322,217 +1235,126 @@ def _intent_for(tool: str, args: Dict[str, Any]) -> str:
     }.get(tool, "attrition")
 
 
-def _choice_confidence(answers: Dict[str, Any], name: str) -> float:
-    answer = _jev_answer(answers, name, "choice")
-    try:
-        return max(0.0, min(1.0, float(answer.get("confidence", 0.0) or 0.0)))
-    except (TypeError, ValueError):
-        return 0.0
-
-
-async def _call_island_jev(
-    state: GameState,
-    side: str,
-    stage: str,
-    decision_state: Dict[str, Any],
-    questions: Dict[str, Any],
-) -> Dict[str, Any]:
-    request = {
-        "model": settings.jev_model,
-        "state": decision_state,
-        "questions": questions,
-    }
-    await _trace(
-        agent=side, direction="sent", model=settings.jev_model,
-        provider="typesafe", turn=state.world.turn, api="systemone",
-        stage=stage, stateless=True, method="POST", endpoint="/v1/systemone",
-        content=request,
-    )
-    return await jev.decide(
-        api_key=settings.typesafe_api_key,
-        model=settings.jev_model,
-        state=decision_state,
-        questions=questions,
-    )
-
-
-async def _jev_terms(
-    state: GameState,
-    side: str,
-    allowed: List[str],
-    decision_state: Dict[str, Any],
-) -> tuple[List[str], List[str]]:
-    questions = {
-        article: {
-            "type": "choice",
-            "instructions": (
-                f"Choose {side}'s exact negotiating stance on {ARTICLES[article]['title']}."
-            ),
-            "criteria": {
-                "silent": "Take no position on this clause in this offer.",
-                "demand": (
-                    "Demand that the opposing island concede this clause; this makes no "
-                    "concession by your own government."
-                ),
-                "concede": (
-                    f"Concede this clause: {ARTICLES[article]['concede'][side]} "
-                    f"Domestic unrest cost: {ARTICLES[article]['cost'][side]}."
-                ),
+def _commander_response_format(candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Strict response contract for one strategic choice and its public declaration."""
+    article_ids = list(ARTICLES)
+    return {
+        "type": "json_schema",
+        "name": "commander_turn",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "action_id": {
+                    "type": "string",
+                    "enum": [candidate["id"] for candidate in candidates],
+                },
+                "message": {"type": "string", "maxLength": 180},
+                "demand": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": article_ids},
+                },
+                "concede": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": article_ids},
+                },
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             },
-        }
-        for article in allowed
+            "required": ["action_id", "message", "demand", "concede", "confidence"],
+            "additionalProperties": False,
+        },
     }
-    response = await _call_island_jev(state, side, "terms", decision_state, questions)
-    answers = response.get("answers")
-    if not isinstance(answers, dict):
-        raise ValueError("Jev returned no negotiation answers")
-    demand: List[str] = []
-    concede: List[str] = []
-    for article in allowed:
-        stance = _jev_choice(answers, article)
-        if stance == "demand":
-            demand.append(article)
-        elif stance == "concede":
-            concede.append(article)
-    await _trace(
-        agent=side, direction="received", model=settings.jev_model,
-        provider="typesafe", turn=state.world.turn, api="systemone",
-        stage="terms", stateless=True,
-        content={"decision": {"demand": demand, "concede": concede},
-                 "jev_response": response},
-    )
-    await _trace(
-        agent=side, direction="usage", model=settings.jev_model,
-        provider="typesafe", turn=state.world.turn, api="systemone",
-        stage="terms", stateless=True, **_jev_usage_payload(response),
-    )
-    return demand, concede
 
 
-async def _jev_island_action(
-    state: GameState, side: str, legal: List[str]
-) -> Action:
-    candidates, schemas = _legal_action_candidates(state, side, legal)
-    decision_state = {
-        "identity_and_doctrine": DOCTRINE[side],
-        "historical_case": doctrine_for(side),
-        "war_endings": TERMS,
+def _commander_input(
+    state: GameState, side: str, legal: List[str], candidates: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    return {
         "campaign_doctrine": COMMAND_DOCTRINE,
         "campaign_reference": COMMANDER_SHARED_REFERENCE,
-        "turn": json.loads(_brief(state, side, legal)),
-    }
-    questions = {
-        "action": {
-            "type": "choice",
-            "instructions": (
-                "Choose the strongest legal action for this island now. Play to prevail "
-                "across the full campaign, account for finite money and weapons, adapt to "
-                "recent conduct, and do not choose an option merely for rhetorical effect."
-            ),
-            "criteria": {
-                candidate["id"]: candidate["description"] for candidate in candidates
-            },
-        }
-    }
-    response = await _call_island_jev(state, side, "decision", decision_state, questions)
-    answers = response.get("answers")
-    if not isinstance(answers, dict):
-        raise ValueError("Jev returned no action answer")
-    selected_id = _jev_choice(answers, "action")
-    selected = next((c for c in candidates if c["id"] == selected_id), None)
-    if selected is None:
-        raise ValueError(f"Jev selected unknown action candidate {selected_id!r}")
-    args = dict(selected["args"])
-    if selected["tool"] == "table_terms":
-        properties = schemas["table_terms"]["parameters"].get("properties", {})
-        allowed = list(properties.get("demand", {}).get("items", {}).get("enum", []))
-        args["demand"], args["concede"] = await _jev_terms(
-            state, side, allowed, decision_state
-        )
-    confidence = _choice_confidence(answers, "action")
-    raw = {
-        "action": selected["tool"],
-        **args,
-        "message": "",
-        "intent": _intent_for(selected["tool"], args),
-    }
-    action = _validated_response_action(state, side, legal, raw, settings.jev_model)
-    action.decision_confidence = confidence
-    await _trace(
-        agent=side, direction="received", model=settings.jev_model,
-        provider="typesafe", turn=state.world.turn, api="systemone",
-        stage="decision", stateless=True,
-        content={
-            "decision": {
-                "action": action.tool,
-                "arguments": {k: v for k, v in action.args.items() if k != "message"},
-                "confidence": confidence,
-            },
-            "jev_response": response,
-        },
-    )
-    await _trace(
-        agent=side, direction="usage", model=settings.jev_model,
-        provider="typesafe", turn=state.world.turn, api="systemone",
-        stage="decision", stateless=True, **_jev_usage_payload(response),
-    )
-    return action
-
-
-def _dialogue_input(state: GameState, side: str, action: Action) -> Dict[str, Any]:
-    return {
-        "locked_action": {
-            "action": action.tool,
-            "arguments": {
-                key: value for key, value in action.args.items() if key != "message"
-            },
-        },
-        "turn": state.world.turn,
-        "recent_public_record": _war_log(state, side, limit=6),
-        "grievances": state.world.grievances[-6:],
-        "casualties_and_protected_places": _toll_block(state, side),
-        "negotiating_table": _talks_block(state, side),
-        "enemy_intelligence": _enemy_intelligence(state, side),
+        "private_turn_brief": json.loads(_brief(state, side, legal)),
+        "legal_actions": candidates,
     }
 
 
-async def _write_dialogue(state: GameState, side: str, action: Action, model: str) -> str:
+async def _openai_commander_action(
+    state: GameState, side: str, legal: List[str], model: str
+) -> Action:
+    """Choose and voice one legal move in a single stateless OpenAI request."""
+    candidates, schemas = _legal_action_candidates(state, side, legal)
     request: Dict[str, Any] = {
         "model": model,
         "input": [
-            {"role": "developer", "content": _dialogue_developer_prompt(side)},
+            {"role": "developer", "content": _commander_developer_prompt(side)},
             {
                 "role": "user",
-                "content": json.dumps(_dialogue_input(state, side, action), indent=2),
+                "content": json.dumps(
+                    _commander_input(state, side, legal, candidates), indent=2
+                ),
             },
         ],
-        "text": {"format": DIALOGUE_RESPONSE_FORMAT},
-        "prompt_cache_key": f"yudhyantra:dialogue:{side}:v2:{model}",
+        "text": {"format": _commander_response_format(candidates)},
+        "prompt_cache_key": f"yudhyantra:commander:{side}:v3:{model}",
         "store": False,
-        **_response_controls(model, temperature=1.0),
+        **_response_controls(model, temperature=0.8),
     }
     await _trace(
         agent=side, direction="sent", model=model, provider="openai",
-        turn=state.world.turn, api="responses", stage="dialogue", stateless=True,
+        turn=state.world.turn, api="responses", stage="decision", stateless=True,
         method="POST", endpoint="/v1/responses", content=request,
     )
     response = await _client().responses.create(**request)
     await _trace(
         agent=side, direction="received", model=model, provider="openai",
-        turn=state.world.turn, api="responses", stage="dialogue", stateless=True,
+        turn=state.world.turn, api="responses", stage="decision", stateless=True,
         content=_wire_payload(response),
     )
     raw = json.loads(str(_read(response, "output_text", "") or ""))
-    message = raw.get("message") if isinstance(raw, dict) else None
-    if not isinstance(message, str) or not message.strip():
-        raise ValueError("OpenAI returned no commander dialogue")
+    if not isinstance(raw, dict):
+        raise ValueError("OpenAI returned no commander decision")
+    selected_id = str(raw.get("action_id") or "")
+    selected = next((item for item in candidates if item["id"] == selected_id), None)
+    if selected is None:
+        raise ValueError(f"OpenAI selected unknown action candidate {selected_id!r}")
+
+    args = dict(selected["args"])
+    if selected["tool"] == "table_terms":
+        properties = schemas["table_terms"]["parameters"].get("properties", {})
+        allowed = set(properties.get("demand", {}).get("items", {}).get("enum", []))
+        demand = list(dict.fromkeys(raw.get("demand") or []))
+        concede = list(dict.fromkeys(raw.get("concede") or []))
+        if any(article not in allowed for article in demand + concede):
+            raise ValueError("OpenAI selected an unknown negotiation article")
+        if set(demand) & set(concede):
+            raise ValueError("OpenAI both demanded and conceded the same article")
+        args.update({"demand": demand, "concede": concede})
+
+    action = _validated_response_action(
+        state,
+        side,
+        legal,
+        {
+            "action": selected["tool"],
+            **args,
+            "message": str(raw.get("message") or ""),
+            "intent": _intent_for(selected["tool"], args),
+        },
+        model,
+    )
+    if not action.args.get("message"):
+        raise ValueError("OpenAI returned no commander declaration")
+    try:
+        action.decision_confidence = max(0.0, min(1.0, float(raw.get("confidence", 0))))
+    except (TypeError, ValueError):
+        action.decision_confidence = 0.0
+    action.dialogue_model = model
     await _trace(
         agent=side, direction="usage", model=model, provider="openai",
-        turn=state.world.turn, api="responses", stage="dialogue", stateless=True,
+        turn=state.world.turn, api="responses", stage="decision", stateless=True,
         response_id=str(_read(response, "id", "")),
         **_usage_payload(response, model),
     )
-    return _trim_dialogue(message)
+    return action
 
 
 def _fallback_dialogue(action: Action) -> str:
@@ -1561,7 +1383,7 @@ def _fallback_dialogue(action: Action) -> str:
 
 async def decide(state: GameState, side: str) -> Action:
     legal = legal_tools_for(state, side)
-    dialogue_model = settings.model_for(side)
+    commander_model = settings.model_for(side)
 
     if settings.force_mock:
         action = _mock_action(state, side, legal)
@@ -1581,49 +1403,31 @@ async def decide(state: GameState, side: str) -> Action:
 
     if settings.use_mock_decisions:
         action = _mock_action(state, side, legal)
-        action.source, action.legal, action.model = "fallback", legal, "mock"
-        await _trace(
-            agent=side, direction="status", model="mock", provider="local",
-            stage="decision", turn=state.world.turn,
-            content="No TypeSafe key — scripted policy selected the locked action.",
-        )
-    else:
-        try:
-            action = await _jev_island_action(state, side, legal)
-        except Exception as exc:  # noqa: BLE001 - never let a bad turn kill the match
-            await _trace(
-                agent=side, direction="error", model=settings.jev_model,
-                provider="typesafe", stage="decision", turn=state.world.turn,
-                api="systemone", content=_error_payload(exc),
-            )
-            action = _mock_action(state, side, legal)
-            action.source, action.legal = "fallback", legal
-            action.model = settings.jev_model
-            action.reasoning = f"[decision fallback: {type(exc).__name__}] {action.reasoning}"
-
-    if settings.use_mock_dialogue:
         action.args["message"] = _fallback_dialogue(action)
+        action.source, action.legal, action.model = "fallback", legal, "mock"
         action.dialogue_model = "mock"
         await _trace(
             agent=side, direction="status", model="mock", provider="local",
-            stage="dialogue", turn=state.world.turn,
-            content="No OpenAI key — deterministic dialogue accompanied the locked action.",
+            stage="decision", turn=state.world.turn,
+            content="No OpenAI key — scripted policy selected and voiced the action.",
         )
-    else:
-        try:
-            action.args["message"] = await _write_dialogue(
-                state, side, action, dialogue_model
-            )
-            action.dialogue_model = dialogue_model
-        except Exception as exc:  # noqa: BLE001
-            await _trace(
-                agent=side, direction="error", model=dialogue_model,
-                provider="openai", stage="dialogue", turn=state.world.turn,
-                api="responses", content=_error_payload(exc),
-            )
-            action.args["message"] = _fallback_dialogue(action)
-            action.dialogue_model = "fallback"
-    return action
+        return action
+
+    try:
+        return await _openai_commander_action(state, side, legal, commander_model)
+    except Exception as exc:  # noqa: BLE001 - never let a bad turn kill the match
+        await _trace(
+            agent=side, direction="error", model=commander_model,
+            provider="openai", stage="decision", turn=state.world.turn,
+            api="responses", content=_error_payload(exc),
+        )
+        action = _mock_action(state, side, legal)
+        action.args["message"] = _fallback_dialogue(action)
+        action.source, action.legal = "fallback", legal
+        action.model = commander_model
+        action.dialogue_model = "fallback"
+        action.reasoning = f"[decision fallback: {type(exc).__name__}] {action.reasoning}"
+        return action
 
 
 # --------------------------------------------------------------------------- Jev arbiter

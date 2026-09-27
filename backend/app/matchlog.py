@@ -96,7 +96,9 @@ class MatchLog:
             if p.get("model"):
                 bits.append(f" {p['model']}")
             bits.append("]")
-            if p.get("dialogue_model"):
+            # New commanders choose and speak in one response. Keep the separate field
+            # for older recordings and to make a local dialogue fallback visible.
+            if p.get("dialogue_model") and p.get("dialogue_model") != p.get("model"):
                 bits.append(f" voice={p['dialogue_model']}")
             if p.get("decision_confidence"):
                 bits.append(f" confidence={p['decision_confidence']:.2f}")

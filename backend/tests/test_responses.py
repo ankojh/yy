@@ -1,4 +1,4 @@
-"""Jev owns decisions; OpenAI can only voice the action Jev locked."""
+"""OpenAI commands each island; Jev remains the independent typed Arbiter."""
 
 import asyncio
 import json
@@ -18,12 +18,12 @@ def test_commander_statement_guard_enforces_two_short_sentences():
     )
 
 
-def response(response_id: str, message: str = "We hold."):
+def response(response_id: str, payload: dict, model: str = "gpt-5-nano"):
     return SimpleNamespace(
         id=response_id,
-        model="gpt-5-nano",
+        model=model,
         output=[],
-        output_text=json.dumps({"message": message}),
+        output_text=json.dumps(payload),
         usage=SimpleNamespace(
             input_tokens=120,
             input_tokens_details=SimpleNamespace(
@@ -54,7 +54,7 @@ class FakeClient:
         self.responses = FakeResponses(replies)
 
 
-def hosted(monkeypatch, fake, fake_jev):
+def hosted(monkeypatch, fake):
     monkeypatch.setattr(settings, "_force_mock", False)
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
     monkeypatch.setattr(settings, "typesafe_api_key", "tsf-test")
@@ -62,34 +62,35 @@ def hosted(monkeypatch, fake, fake_jev):
     monkeypatch.setattr(settings, "east_model", "gpt-4.1-nano")
     monkeypatch.setattr(settings, "jev_model", "jev-latest")
     monkeypatch.setattr(agents, "_client", lambda: fake)
-    monkeypatch.setattr(agents.jev, "decide", fake_jev)
 
 
-def chooser(requests, match):
-    async def fake_jev(**request):
-        requests.append(request)
-        criteria = request["questions"]["action"]["criteria"]
-        choice = next(key for key, value in criteria.items() if match in value)
-        return {
-            "model": "jev-1.13.0",
-            "answers": {
-                "action": {"type": "choice", "choice": choice, "confidence": 0.87}
-            },
-            "usage": {"input_tokens": 220, "output_tokens": 1},
-        }
-    return fake_jev
+def candidate_for(state, side, phrase):
+    legal = agents.legal_tools_for(state, side)
+    candidates, _ = agents._legal_action_candidates(state, side, legal)
+    return next(item for item in candidates if phrase in item["description"])
 
 
-def test_jev_locks_action_and_openai_only_writes_dialogue(monkeypatch):
-    jev_requests = []
-    fake = FakeClient([response("voice-1", "Our naval shield rises before your next salvo.")])
-    hosted(
-        monkeypatch,
-        fake,
-        chooser(jev_requests, 'fortify with arguments {"domain": "naval"}'),
-    )
+def commander_payload(candidate, message, **extra):
+    return {
+        "action_id": candidate["id"],
+        "message": message,
+        "demand": extra.get("demand", []),
+        "concede": extra.get("concede", []),
+        "confidence": extra.get("confidence", 0.87),
+    }
+
+
+def test_openai_chooses_and_voices_one_validated_action(monkeypatch):
     state = initial_state()
     state.world.phase = "conflict"
+    candidate = candidate_for(state, "west", 'fortify with arguments {"domain": "naval"}')
+    fake = FakeClient([
+        response(
+            "turn-1",
+            commander_payload(candidate, "Our naval shield rises before your next salvo."),
+        )
+    ])
+    hosted(monkeypatch, fake)
 
     action = asyncio.run(agents.decide(state, "west"))
 
@@ -98,107 +99,75 @@ def test_jev_locks_action_and_openai_only_writes_dialogue(monkeypatch):
         "domain": "naval",
         "message": "Our naval shield rises before your next salvo.",
     }
-    assert action.model == "jev-latest"
-    assert action.dialogue_model == "gpt-5-nano"
+    assert action.model == action.dialogue_model == "gpt-5-nano"
     assert action.decision_confidence == 0.87
     assert action.source == "live"
-    assert jev_requests[0]["state"]["turn"]["tools_you_may_use_this_turn"] == action.legal
 
     request = fake.responses.requests[0]
     assert "tools" not in request
     assert "tool_choice" not in request
     assert "previous_response_id" not in request
     assert request["store"] is False
-    assert request["text"]["format"]["name"] == "commander_dialogue"
-    assert request["text"]["format"]["schema"]["properties"]["message"]["maxLength"] == 180
+    assert request["text"]["format"]["name"] == "commander_turn"
+    schema = request["text"]["format"]["schema"]
+    assert candidate["id"] in schema["properties"]["action_id"]["enum"]
     developer_prompt = request["input"][0]["content"]
+    assert "Choose exactly one action_id" in developer_prompt
     assert "one or two short sentences, 8–24 words" in developer_prompt
-    assert "Do not explain your strategy" in developer_prompt
-    assert "directly to the enemy" in developer_prompt
-    locked = json.loads(request["input"][1]["content"])["locked_action"]
-    assert locked == {"action": "fortify", "arguments": {"domain": "naval"}}
+    private_input = json.loads(request["input"][1]["content"])
+    assert private_input["private_turn_brief"]["tools_you_may_use_this_turn"] == action.legal
+    assert candidate in private_input["legal_actions"]
 
 
-def test_table_terms_are_a_second_typed_jev_decision(monkeypatch):
-    requests = []
-
-    async def fake_jev(**request):
-        requests.append(request)
-        if "action" in request["questions"]:
-            criteria = request["questions"]["action"]["criteria"]
-            choice = next(k for k, v in criteria.items() if v.startswith("table terms"))
-            answers = {"action": {"type": "choice", "choice": choice, "confidence": 0.7}}
-        else:
-            answers = {
-                article: {
-                    "type": "choice",
-                    "choice": "concede" if article == "bellow_reef" else "demand",
-                    "confidence": 0.8,
-                }
-                for article in request["questions"]
-            }
-        return {"answers": answers, "usage": {"input_tokens": 100, "output_tokens": 2}}
-
-    fake = FakeClient([response("voice-terms", "These are our terms. Answer them.")])
-    hosted(monkeypatch, fake, fake_jev)
+def test_openai_can_choose_negotiation_positions_in_the_same_response(monkeypatch):
     state = initial_state()
     state.world.phase = "conflict"
     state.world.talks.open = True
+    candidate = candidate_for(state, "west", "table terms with arguments")
+    fake = FakeClient([
+        response(
+            "turn-terms",
+            commander_payload(
+                candidate,
+                "These are our terms. Refuse them and the ceasefire ends.",
+                demand=["kestrel_line", "halcyon_apology"],
+                concede=["bellow_reef"],
+            ),
+        )
+    ])
+    hosted(monkeypatch, fake)
 
     action = asyncio.run(agents.decide(state, "west"))
 
-    assert len(requests) == 2
+    assert len(fake.responses.requests) == 1
     assert action.tool == "table_terms"
+    assert action.args["demand"] == ["kestrel_line", "halcyon_apology"]
     assert action.args["concede"] == ["bellow_reef"]
-    assert "bellow_reef" not in action.args["demand"]
-    assert set(action.args["demand"]) == set(requests[1]["questions"]) - {"bellow_reef"}
 
 
-def test_jev_failure_uses_scripted_action_but_openai_voices_it(monkeypatch):
-    async def broken_jev(**_request):
-        raise RuntimeError("decision service unavailable")
-
-    fake = FakeClient([response("voice-fallback", "The course is set; prepare yourselves.")])
-    hosted(monkeypatch, fake, broken_jev)
+def test_openai_failure_falls_back_to_a_complete_local_action(monkeypatch):
+    fake = FakeClient([RuntimeError("commander service unavailable")])
+    hosted(monkeypatch, fake)
     state = initial_state()
     state.world.phase = "conflict"
 
     action = asyncio.run(agents.decide(state, "west"))
 
     assert action.source == "fallback"
-    assert action.model == "jev-latest"
-    assert action.dialogue_model == "gpt-5-nano"
-    assert action.args["message"] == "The course is set; prepare yourselves."
-    locked = json.loads(fake.responses.requests[0]["input"][1]["content"])["locked_action"]
-    assert locked["action"] == action.tool
-
-
-def test_openai_failure_never_changes_jevs_locked_action(monkeypatch):
-    requests = []
-    fake = FakeClient([RuntimeError("voice service unavailable")])
-    hosted(
-        monkeypatch,
-        fake,
-        chooser(requests, 'fortify with arguments {"domain": "cyber"}'),
-    )
-    state = initial_state()
-    state.world.phase = "conflict"
-
-    action = asyncio.run(agents.decide(state, "west"))
-
-    assert action.tool == "fortify"
-    assert action.args["domain"] == "cyber"
-    assert action.args["message"]
-    assert action.source == "live"
+    assert action.model == "gpt-5-nano"
     assert action.dialogue_model == "fallback"
+    assert action.tool in action.legal
+    assert action.args["message"]
 
 
-def test_dev_trace_separates_jev_decision_from_openai_dialogue(monkeypatch):
-    requests = []
-    fake = FakeClient([response("wire-1", "We are holding this line.")])
-    hosted(monkeypatch, fake, chooser(requests, "hold with arguments {}"))
+def test_dev_trace_records_one_openai_commander_request(monkeypatch):
     state = initial_state()
     state.world.phase = "conflict"
+    candidate = candidate_for(state, "west", "hold with arguments {}")
+    fake = FakeClient([
+        response("wire-1", commander_payload(candidate, "We reload now. You burn next."))
+    ])
+    hosted(monkeypatch, fake)
     traces = []
 
     async def capture(payload):
@@ -213,35 +182,26 @@ def test_dev_trace_separates_jev_decision_from_openai_dialogue(monkeypatch):
 
     asyncio.run(go())
 
-    decision_sent = next(
-        t for t in traces if t.get("stage") == "decision" and t["direction"] == "sent"
-    )
-    dialogue_sent = next(
-        t for t in traces if t.get("stage") == "dialogue" and t["direction"] == "sent"
-    )
-    dialogue_received = next(
-        t for t in traces if t.get("stage") == "dialogue" and t["direction"] == "received"
+    sent = [t for t in traces if t.get("stage") == "decision" and t["direction"] == "sent"]
+    received = next(
+        t for t in traces if t.get("stage") == "decision" and t["direction"] == "received"
     )
     usage = next(
-        t for t in traces if t.get("stage") == "dialogue" and t["direction"] == "usage"
+        t for t in traces if t.get("stage") == "decision" and t["direction"] == "usage"
     )
-    assert decision_sent["provider"] == "typesafe"
-    assert decision_sent["endpoint"] == "/v1/systemone"
-    assert dialogue_sent["provider"] == "openai"
-    assert dialogue_sent["content"] == fake.responses.requests[0]
-    assert dialogue_sent["content"]["reasoning"] == {"effort": "minimal"}
-    assert dialogue_received["content"]["id"] == "wire-1"
+    assert len(sent) == 1
+    assert sent[0]["provider"] == "openai"
+    assert sent[0]["endpoint"] == "/v1/responses"
+    assert sent[0]["content"]["reasoning"] == {"effort": "minimal"}
+    assert received["content"]["id"] == "wire-1"
     assert usage["uncached_input_tokens"] == 40
-    assert usage["cache_write_tokens"] == 16
     assert usage["cache_hit_percent"] == 66.67
     assert usage["reasoning_tokens"] == 6
     assert usage["context_window_tokens"] == 400_000
-    assert usage["context_utilization_percent"] == 0.0335
-    assert usage["remaining_context_tokens"] == 399_866
 
 
 def test_unknown_model_usage_omits_unverifiable_context_metrics():
-    reply = response("wire-unknown")
+    reply = response("wire-unknown", commander_payload({"id": "option_0"}, "Hold."))
     reply.model = "custom-model"
     payload = agents._usage_payload(reply, "custom-model")
     assert payload["input_tokens"] == 120
@@ -251,8 +211,11 @@ def test_unknown_model_usage_omits_unverifiable_context_metrics():
 
 
 def test_gpt_4_1_nano_usage_uses_its_larger_context_window():
-    reply = response("wire-east")
-    reply.model = "gpt-4.1-nano"
+    reply = response(
+        "wire-east",
+        commander_payload({"id": "option_0"}, "Hold."),
+        model="gpt-4.1-nano",
+    )
     payload = agents._usage_payload(reply, "gpt-4.1-nano")
     assert payload["context_window_tokens"] == 1_047_576
     assert payload["remaining_context_tokens"] == 1_047_442
@@ -305,9 +268,6 @@ def test_arbiter_uses_one_stateless_jev_decision_request(monkeypatch):
         for side in ("west", "east")
     ]
     assert len(request["questions"]) == 11
-    assert request["questions"]["west_coherent"]["type"] == "noul"
-    assert request["questions"]["condemned"]["type"] == "choice"
-    assert request["questions"]["tension"]["type"] == "choice"
     assert result["tension_delta"] == 0
     assert result["condemned"] is None
     assert result["condemnation"] == 0

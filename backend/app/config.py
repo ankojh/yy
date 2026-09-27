@@ -8,12 +8,12 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # Bump whenever mechanics or costs change. Stamped into every match log so a
 # transcript can be read against the rules that actually produced it.
-BALANCE_VERSION = "2026.08.23-b5-intelligence"
+BALANCE_VERSION = "2026.09.26-b7-openai-commanders"
 
 # --------------------------------------------------------------------------- the panel
 #
-# Jev makes every strategic decision. The two OpenAI models are contrasting public
-# voices only: neither receives tools or authority to alter Jev's locked action.
+# The two OpenAI models are private commanders: each selects and voices one legal action.
+# Jev remains the independent Arbiter and never shares a commander's private prompt.
 DEFAULT_PANEL = {
     "west": "gpt-5-nano",
     "east": "gpt-4.1-nano",
@@ -31,8 +31,8 @@ class Settings:
         debug_default = self.app_env != "production"
         debug_value = os.getenv("LLM_DEBUG", "1" if debug_default else "0").lower()
         self.llm_debug = debug_value in ("1", "true", "yes")
-        # Jev chooses island actions and adjudicates them. OpenAI only writes the public
-        # declarations. Both keys stay backend-only; either lane falls back independently.
+        # OpenAI commands the islands; Jev adjudicates the completed declarations. Both
+        # keys stay backend-only and either provider lane falls back independently.
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
         self.typesafe_api_key = os.getenv("TYPESAFE_API_KEY", "").strip()
         # Neural speech is deliberately separate from the game models. Provider credentials
@@ -54,12 +54,12 @@ class Settings:
             os.getenv("AZURE_SPEECH_VOICE_EAST", "en-US-GuyNeural").strip()
             or "en-US-GuyNeural"
         )
-        # NATION_MODEL, if set, gives both islands the same dialogue voice.
+        # NATION_MODEL, if set, gives both islands the same commander model.
         both = os.getenv("NATION_MODEL", "")
         self.west_model = os.getenv("WEST_MODEL", both or DEFAULT_PANEL["west"])
         self.east_model = os.getenv("EAST_MODEL", both or DEFAULT_PANEL["east"])
         self.jev_model = os.getenv("JEV_MODEL", DEFAULT_PANEL["arbiter"])
-        # Flip which public voice speaks for each island without changing Jev's decisions.
+        # Flip which OpenAI commander runs each island without changing the Jev Arbiter.
         self.swap_models = os.getenv("SWAP_MODELS", "").lower() in ("1", "true", "yes")
         self.max_turns = int(os.getenv("MAX_TURNS", "12"))
         # Pacing. The loop resolves far faster than anyone can read, and the interesting
@@ -68,9 +68,9 @@ class Settings:
         # the statement goes up, the ordnance flies, the damage lands, and the bubble
         # stays readable for the whole of it. The frontend is told this number so its
         # tooltips live exactly as long as the beat they belong to.
-        self.reveal = float(os.getenv("REVEAL", "18.0"))   # seconds per declared action
-        self.beat = float(os.getenv("BEAT", "0.6"))        # short punctuation pauses
-        self.turn_pause = float(os.getenv("TURN_PAUSE", "4.0"))  # between turns
+        self.reveal = float(os.getenv("REVEAL", "9.0"))    # seconds per declared action
+        self.beat = float(os.getenv("BEAT", "0.3"))         # short punctuation pauses
+        self.turn_pause = float(os.getenv("TURN_PAUSE", "2.0"))  # between turns
         self.log_dir = Path(os.getenv("LOG_DIR", Path(__file__).resolve().parent.parent / "logs"))
         self._force_mock = os.getenv("MOCK", "").lower() in ("1", "true", "yes")
         # The replay bench. `REPLAY=<name>` starts every connection on a recorded match
@@ -84,7 +84,7 @@ class Settings:
         )
 
     def model_for(self, side: str) -> str:
-        """Which OpenAI model voices this island after Jev locks its decision."""
+        """Which OpenAI model chooses and voices this island's move."""
         if self.use_mock_dialogue:
             return "mock"
         if self.swap_models:
@@ -93,7 +93,7 @@ class Settings:
 
     @property
     def panel(self) -> dict:
-        """The two dialogue voices and typed referee, for logs and the UI."""
+        """The two commanders and typed referee, for logs and the UI."""
         return {
             "west": self.model_for("west"),
             "east": self.model_for("east"),
@@ -111,12 +111,12 @@ class Settings:
 
     @property
     def use_mock_decisions(self) -> bool:
-        """Without TypeSafe, island actions fall back to the scripted policy."""
-        return self._force_mock or not self.typesafe_api_key
+        """Without OpenAI, island actions fall back to the scripted policy."""
+        return self._force_mock or not self.openai_api_key
 
     @property
     def use_mock_dialogue(self) -> bool:
-        """Without OpenAI, locked actions receive deterministic declarations."""
+        """Decision and dialogue are one OpenAI commander response."""
         return self._force_mock or not self.openai_api_key
 
     @property

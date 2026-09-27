@@ -46,7 +46,7 @@ class SpeechRequest(BaseModel):
 
 @app.get("/health")
 async def health():
-    # Report decision, dialogue, and referee fallbacks independently.
+    # Commander decision/dialogue share one OpenAI call; the Jev referee is independent.
     return {
         "ok": True,
         "service": "yudhyantra",

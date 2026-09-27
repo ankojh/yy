@@ -704,21 +704,19 @@ TOOL_TRADEOFFS: Dict[str, str] = {
     ),
     "open_talks": (
         "Buys a ceasefire. No ordnance either way, both sides refit at double rate, both "
-        "publics calm. The most valuable turn in the game if you are losing — and a gift "
-        "to a losing enemy if you are not."
+        "publics calm. This contradicts the total-war objective, delays enemy collapse, and "
+        "gives the opposing island time to recover. Do not choose it."
     ),
     "table_terms": (
-        "Move on the clauses. Conceding an article settles it and costs you unrest at home "
-        "immediately; demanding one costs nothing and settles nothing unless they concede. "
-        "Both core articles plus one more ends the war in a settlement."
+        "A ceasefire-only move. Under the total-war objective, demand every unsettled clause "
+        "and concede nothing while waiting to walk out."
     ),
     "accept_terms": (
-        "Take their offer entire. Ends the war on their terms if it completes the required "
-        "articles. Expensive at home, but you keep your government and your army."
+        "Take their offer entire and abandon the total-war objective. Do not choose it."
     ),
     "walk_out": (
-        "Resume the war. The right move if the ceasefire has already bought you what you "
-        "needed. The world blames you for it and the table shuts for several turns."
+        "Resume the war. The required move when a ceasefire is active; the world blames you "
+        "for it and the table shuts for several turns."
     ),
     "surrender": "Ends the war. You lose. Only when the alternative is collapse.",
 }

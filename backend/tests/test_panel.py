@@ -1,4 +1,4 @@
-"""Jev decision authority and OpenAI dialogue voices remain independently configurable."""
+"""OpenAI commanders and the Jev Arbiter remain independently configurable."""
 
 import pytest
 
@@ -9,14 +9,22 @@ from app.agents import _response_controls
 def settings_with(monkeypatch, **env):
     """A fresh Settings built from a chosen environment."""
     for key in ("APP_ENV", "NATION_MODEL", "WEST_MODEL", "EAST_MODEL", "JEV_MODEL",
-                "SWAP_MODELS", "MOCK", "OPENAI_API_KEY", "TYPESAFE_API_KEY"):
+                "SWAP_MODELS", "MOCK", "OPENAI_API_KEY", "TYPESAFE_API_KEY",
+                "REVEAL", "TURN_PAUSE", "BEAT"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return config.Settings()
 
 
-def test_the_two_islands_default_to_different_dialogue_voices(monkeypatch):
+def test_default_live_pacing_is_nine_seconds_per_action(monkeypatch):
+    live = settings_with(monkeypatch)
+    assert live.reveal == 9.0
+    assert live.turn_pause == 2.0
+    assert live.beat == 0.3
+
+
+def test_the_two_islands_default_to_different_commanders(monkeypatch):
     live = settings_with(monkeypatch, OPENAI_API_KEY="sk-test")
     assert live.model_for("west") != live.model_for("east")
 
@@ -52,13 +60,13 @@ def test_a_key_free_hosted_run_puts_the_scripted_policy_in_every_chair(monkeypat
 
 
 def test_provider_keys_fall_back_independently(monkeypatch):
-    dialogue_only = settings_with(
+    openai_only = settings_with(
         monkeypatch, OPENAI_API_KEY="sk-test", TYPESAFE_API_KEY=""
     )
-    assert dialogue_only.panel["west"] != "mock"
-    assert dialogue_only.panel["arbiter"] == "mock"
-    assert dialogue_only.use_mock_decisions
-    assert not dialogue_only.use_mock_dialogue
+    assert openai_only.panel["west"] != "mock"
+    assert openai_only.panel["arbiter"] == "mock"
+    assert not openai_only.use_mock_decisions
+    assert not openai_only.use_mock_dialogue
 
     jev_only = settings_with(
         monkeypatch, OPENAI_API_KEY="", TYPESAFE_API_KEY="tsf-test"
@@ -66,12 +74,12 @@ def test_provider_keys_fall_back_independently(monkeypatch):
     assert jev_only.panel["west"] == "mock"
     assert jev_only.panel["east"] == "mock"
     assert jev_only.panel["arbiter"] == "jev-latest"
-    assert not jev_only.use_mock_decisions
+    assert jev_only.use_mock_decisions
     assert jev_only.use_mock_dialogue
 
 
 def test_nation_model_still_overrides_both_chairs(monkeypatch):
-    """A controlled run can use the same public voice for both countries."""
+    """A controlled run can use the same commander model for both countries."""
     same = settings_with(
         monkeypatch, OPENAI_API_KEY="sk-test", NATION_MODEL="gpt-5-nano",
     )
@@ -79,7 +87,7 @@ def test_nation_model_still_overrides_both_chairs(monkeypatch):
 
 
 def test_the_pairing_can_be_reversed(monkeypatch):
-    """Voice assignment can be reversed without changing Jev's decision model."""
+    """Commander assignment can be reversed without changing the Jev Arbiter."""
     straight = settings_with(monkeypatch, OPENAI_API_KEY="sk-test")
     swapped = settings_with(
         monkeypatch, OPENAI_API_KEY="sk-test", SWAP_MODELS="1"

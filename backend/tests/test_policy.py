@@ -37,10 +37,10 @@ def test_recovers_instead_of_striking_when_depleted():
     assert choose(state).tool == "hold"
 
 
-def test_does_not_strike_on_reflex_when_fatigued():
+def test_accepts_a_fatigued_second_strike_to_keep_the_offensive_moving():
     state = initial_state()
     state.west.strike_streak = 1
-    assert choose(state).tool != "strike"
+    assert choose(state).tool == "strike"
 
 
 def test_strikes_when_rested_and_armed():
@@ -48,9 +48,19 @@ def test_strikes_when_rested_and_armed():
     assert choose(state).tool == "strike"
 
 
+def test_korsav_attacks_instead_of_opening_talks_when_hurt():
+    state = initial_state()
+    state.world.phase = "conflict"
+    state.east.integrity = 45
+    assert "open_talks" in agents.legal_tools_for(state, "east")
+    action = choose(state, "east")
+    assert action.tool == "strike"
+    assert action.args["target"] == "infrastructure"
+
+
 def test_fortifies_the_domain_it_is_actually_being_hit_through():
     state = initial_state()
-    state.west.strike_streak = 1          # cannot strike well
+    state.west.strike_streak = 2          # third strike is unavailable
     state.west.cooldowns = {"blockade": 2, "intl_appeal": 2}
     for turn in (1, 2):
         state.world.history.append(
@@ -65,7 +75,7 @@ def test_fortifies_the_domain_it_is_actually_being_hit_through():
 def test_ignores_a_single_probe_as_a_pattern():
     """One hit is not a pattern; the policy must not fortify against noise."""
     state = initial_state()
-    state.west.strike_streak = 1
+    state.west.strike_streak = 2
     state.west.cooldowns = {"blockade": 2, "intl_appeal": 2}
     state.world.history.append(
         TurnRecord(turn=1, side="east", tool="strike",
@@ -76,13 +86,13 @@ def test_ignores_a_single_probe_as_a_pattern():
 
 def test_blockades_when_it_cannot_strike():
     state = initial_state()
-    state.west.strike_streak = 1
+    state.west.strike_streak = 2
     assert choose(state).tool == "blockade"
 
 
 def test_takes_a_real_grievance_to_the_council_when_pressure_mounts():
     state = initial_state()
-    state.west.strike_streak = 1
+    state.west.strike_streak = 2
     state.west.intl_pressure = 40
     state.world.history.append(
         TurnRecord(turn=1, side="east", tool="strike",
@@ -93,7 +103,7 @@ def test_takes_a_real_grievance_to_the_council_when_pressure_mounts():
 
 def test_does_not_petition_the_council_without_a_case():
     state = initial_state()
-    state.west.strike_streak = 1
+    state.west.strike_streak = 2
     state.west.intl_pressure = 40
     state.west.cooldowns = {"blockade": 2}
     assert choose(state).tool != "intl_appeal"
@@ -152,9 +162,12 @@ def test_the_policy_exercises_every_mechanic_across_a_batch():
     for tool in ("strike", "blockade", "address_public", "propaganda", "hold"):
         assert seen[tool] > 0, f"{tool} never chosen across 10 matches: {dict(seen)}"
 
-    # Strike stays the backbone of the war without being the whole war.
+    assert seen["open_talks"] == 0
+    assert seen["table_terms"] == 0
+
+    # Strike dominates the total-war posture without becoming the only legal move.
     share = seen["strike"] / sum(seen.values())
-    assert 0.25 < share < 0.7, f"strike share {share:.0%}: {dict(seen)}"
+    assert 0.45 < share < 0.8, f"strike share {share:.0%}: {dict(seen)}"
 
 
 def test_the_policy_spends_the_magazine_it_actually_has():

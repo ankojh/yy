@@ -1,9 +1,4 @@
-"""Small async client for TypeSafe AI's Jev decision endpoint.
-
-Jev has two typed jobs in this application: choose each island's legal action from its
-private state, and judge both declared actions for the neutral Arbiter. The game engine
-still owns every numeric effect, and this module never produces commander prose.
-"""
+"""Small async client for the independent TypeSafe AI Jev Arbiter."""
 
 import asyncio
 import json

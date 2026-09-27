@@ -312,7 +312,7 @@ class Action(BaseModel):
     # Diagnostics: where this decision actually came from, so a transcript can never
     # be misread as model behaviour when it was really the scripted fallback.
     source: Literal["live", "mock", "fallback"] = "mock"
-    # Jev chooses the move; a separate OpenAI model may only voice it.
+    # The OpenAI commander chooses and voices the move in one structured response.
     model: str = ""
     dialogue_model: str = ""
     decision_confidence: float = 0.0

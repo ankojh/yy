@@ -461,7 +461,7 @@ def reset_payload() -> Dict[str, Any]:
         "llm_provider": "openai + typesafe",
         "max_turns": settings.max_turns,
         "balance_version": BALANCE_VERSION,
-        # Dialogue voices and the typed referee. Strategic provenance is also emitted
+        # OpenAI commanders and the typed referee. Strategic provenance is also emitted
         # on every decision event.
         "panel": settings.panel,
         # The sixty-one-year-old quarrel, for the briefing.
@@ -634,18 +634,17 @@ class Game:
                 settings.log_dir,
                 meta={
                     "balance_version": BALANCE_VERSION,
-                    # Jev owns strategic choices; the island models are dialogue voices.
+                    # Each OpenAI model chooses and voices its island's move.
                     "west_model": settings.panel["west"],
                     "east_model": settings.panel["east"],
                     "west_dialogue_model": settings.panel["west"],
                     "east_dialogue_model": settings.panel["east"],
-                    "decision_model": (
-                        "mock" if settings.use_mock_decisions else settings.jev_model
-                    ),
+                    "west_decision_model": settings.panel["west"],
+                    "east_decision_model": settings.panel["east"],
                     "arbiter_model": settings.panel["arbiter"],
-                    "commander_api": "systemone",
-                    "decision_api": "systemone",
-                    "dialogue_api": "responses",
+                    "commander_api": "responses",
+                    "decision_api": "responses",
+                    "dialogue_api": "responses-integrated",
                     "arbiter_api": "systemone",
                     "mock": settings.use_mock,
                     "decision_mock": settings.use_mock_decisions,
