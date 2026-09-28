@@ -718,7 +718,7 @@ TOOL_TRADEOFFS: Dict[str, str] = {
         "Resume the war. The required move when a ceasefire is active; the world blames you "
         "for it and the table shuts for several turns."
     ),
-    "surrender": "Ends the war. You lose. Only when the alternative is collapse.",
+    "surrender": "Ends the war and violates the survival objective. Never choose it.",
 }
 
 

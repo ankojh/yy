@@ -18,6 +18,34 @@ def test_commander_statement_guard_enforces_two_short_sentences():
     )
 
 
+def test_commander_statement_guard_rejects_schema_and_indirect_language():
+    assert not agents._natural_dialogue(
+        'strike with arguments {"target": "infrastructure", "weapon": "drone_swarm"}.'
+    )
+    assert not agents._natural_dialogue("Expect international outrage and increased unrest.")
+    assert not agents._natural_dialogue(
+        "Your aggression brought this response. Stop now, or the next blow will be worse."
+    )
+    assert agents._natural_dialogue(
+        "Your cabinet gambled that we would flinch. Tell them the wager has failed."
+    )
+
+
+def test_attack_dialogue_does_not_narrate_the_visible_weapon_or_target():
+    action = Action(
+        side="west",
+        tool="strike",
+        args={"weapon": "drone_swarm", "target": "infrastructure"},
+    )
+    assert not agents._dialogue_fits_action(
+        action, "We are attacking your infrastructure with drones."
+    )
+    assert agents._dialogue_fits_action(
+        action, "You called our restraint weakness. That miscalculation now belongs to you."
+    )
+    assert agents._direct_dialogue(action, 1) != agents._direct_dialogue(action, 2)
+
+
 def response(response_id: str, payload: dict, model: str = "gpt-5-nano"):
     return SimpleNamespace(
         id=response_id,
@@ -117,6 +145,33 @@ def test_openai_chooses_and_voices_one_validated_action(monkeypatch):
     private_input = json.loads(request["input"][1]["content"])
     assert private_input["private_turn_brief"]["tools_you_may_use_this_turn"] == action.legal
     assert candidate in private_input["legal_actions"]
+
+
+def test_openai_replaces_mechanical_dialogue_without_changing_the_action(monkeypatch):
+    state = initial_state()
+    state.world.phase = "conflict"
+    candidate = candidate_for(
+        state, "west", 'strike with arguments {"target": "infrastructure"'
+    )
+    fake = FakeClient([
+        response(
+            "turn-mechanical",
+            commander_payload(
+                candidate,
+                'strike with arguments {"target":"infrastructure","weapon":"drone_swarm"}.',
+            ),
+        )
+    ])
+    hosted(monkeypatch, fake)
+
+    action = asyncio.run(agents.decide(state, "west"))
+
+    assert action.tool == "strike"
+    assert action.args["target"] == "infrastructure"
+    assert "{" not in action.args["message"]
+    assert "_" not in action.args["message"]
+    assert action.args["message"] in agents.DIRECT_LINES["strike"]
+    assert action.dialogue_model == "guarded-fallback"
 
 
 def test_openai_can_choose_negotiation_positions_in_the_same_response(monkeypatch):

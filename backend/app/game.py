@@ -751,7 +751,7 @@ class Game:
         """Place one request before the Council every few turns, if funds remain."""
         world = self.state.world
         # Headless balance simulations have nobody at the Council desk to answer. Live
-        # websocket games do, so only those pause for a request.
+        # websocket games do, and the request remains available while the war continues.
         if self._emit is None and not self.write_log:
             return
         if world.phase != "conflict" or world.council_request or world.council_budget <= 0:
@@ -868,7 +868,7 @@ class Game:
     async def step(self) -> None:
         async with self._lock:
             world = self.state.world
-            if world.phase != "conflict" or world.council_request:
+            if world.phase != "conflict":
                 return
 
             world.turn += 1
@@ -1018,13 +1018,7 @@ class Game:
 
     async def run(self) -> None:
         """Play the war out. It ends in surrender or collapse — there is no third option."""
-        while (
-            self.state.world.phase == "conflict"
-            and self.state.world.council_request is None
-        ):
+        while self.state.world.phase == "conflict":
             await self.step()
-            if (
-                self.state.world.phase == "conflict"
-                and self.state.world.council_request is None
-            ):
+            if self.state.world.phase == "conflict":
                 await asyncio.sleep(settings.turn_pause)

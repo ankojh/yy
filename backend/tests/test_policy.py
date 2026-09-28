@@ -14,14 +14,32 @@ def choose(state, side="west"):
     return agents._mock_action(state, side, agents.legal_tools_for(state, side))
 
 
-def test_capitulates_only_when_collapse_is_imminent():
+def test_cornered_government_uses_its_last_resort_instead_of_capitulating():
     state = initial_state()
     assert choose(state).tool != "surrender"
 
     state.west.integrity = 10
     action = choose(state)
-    assert action.tool == "surrender"
-    assert action.args["acknowledge"] == "I ACCEPT DEFEAT"
+    assert action.tool == "strike"
+    assert action.args["weapon"] == "nuke"
+
+
+def test_cornered_government_keeps_fighting_without_a_warhead():
+    state = initial_state()
+    state.west.integrity = 10
+    state.west.arsenal["nuke"] = 0
+    action = choose(state)
+    assert action.tool == "strike"
+    assert action.args["weapon"] != "nuke"
+
+
+def test_losing_ground_spends_the_heaviest_effective_conventional_round():
+    state = initial_state()
+    state.west.integrity = 45
+    action = choose(state)
+    assert action.tool == "strike"
+    assert action.args["weapon"] == "cruise_missile"
+    assert action.args["target"] == "infrastructure"
 
 
 def test_shores_up_a_cracking_home_front():
@@ -127,6 +145,7 @@ def test_never_offered_an_illegal_tool():
         state.west.strike_streak = seed % 3
         state.west.integrity = 100 - seed * 6
         legal = agents.legal_tools_for(state, "west")
+        assert "surrender" not in legal
         assert agents._mock_action(state, "west", legal).tool in legal
 
 
@@ -159,7 +178,9 @@ def test_the_policy_exercises_every_mechanic_across_a_batch():
     for seed in range(10):
         seen += asyncio.run(play(seed))
 
-    for tool in ("strike", "blockade", "address_public", "propaganda", "hold"):
+    # The accelerated survival doctrine can end these short matches before the streets
+    # need a speech; that branch has its own focused test above.
+    for tool in ("strike", "blockade", "propaganda", "hold"):
         assert seen[tool] > 0, f"{tool} never chosen across 10 matches: {dict(seen)}"
 
     assert seen["open_talks"] == 0

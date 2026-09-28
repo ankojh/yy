@@ -1,22 +1,10 @@
 import type { Article, GameEvent, GameState, Nation, Side, Talks } from "./types";
 import { WEAPONS, WEAPON_BY_ID } from "./types";
 
-/** The two direct measures of a state's ability to keep fighting. */
-const METERS: Array<[keyof Nation, string]> = [
-  ["integrity", "infrastructure"],
-  ["military", "military"],
-  ["intelligence", "intelligence"],
-];
-
-/**
- * The two constituencies that can end a war without anybody firing anything, plus the
- * instrument that plays them off against each other. These fill *upwards* into danger,
- * which is why they are drawn in their own colours rather than as more green bars.
- */
-const PRESSURES: Array<[keyof Nation, string, string]> = [
-  ["intl_pressure", "international pressure", "intl"],
-  ["unrest", "public unrest", "unrest"],
-];
+/** Deliberately small public HUD: cheap, heavy, and catastrophic force. */
+const VISIBLE_WEAPONS = WEAPONS.filter((w) =>
+  ["drone_swarm", "cruise_missile", "nuke"].includes(w.id)
+);
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -83,26 +71,16 @@ const weaponIcon = (id: string) => `<span class="weapon-icon" aria-hidden="true"
   <svg viewBox="0 0 24 24">${WEAPON_ART[id] ?? WEAPON_ART.cruise_missile}</svg>
 </span>`;
 
-const readiness = (n: Nation) => {
-  const floor = Math.min(n.integrity, n.military);
-  if (floor < 30) return { label: "critical", cls: "critical" };
-  if (floor < 55) return { label: "degraded", cls: "degraded" };
-  return { label: "operational", cls: "operational" };
-};
-
-const flag = (n: Nation, setup = false) => {
-  const state = setup ? { label: "mobilizing", cls: "mobilizing" } : readiness(n);
+const flag = (n: Nation) => {
   return `<div class="nation-header">
     <div class="nation-identity">
       <img class="nation-flag" src="/flags/${n.side === "west" ? "aurelia" : "korsav"}.svg"
            alt="Flag of ${esc(n.name)}" />
       <div class="nation-title">
-        <span class="nation-kicker">island command</span>
+        <span class="nation-kicker">command</span>
         <h2>${esc(n.name)}</h2>
-        ${commander(n)}
       </div>
     </div>
-    <span class="readiness ${state.cls}"><i></i>${state.label}</span>
   </div>`;
 };
 
@@ -111,10 +89,8 @@ const flag = (n: Nation, setup = false) => {
  * model is commanding which island, and what the disputed clauses are called. Held
  * module-level because every renderer below needs it and none of them owns it.
  */
-let panel: Record<string, string> = {};
 let articles: Record<string, Article> = {};
-export function setReference(models: Record<string, string>, clauses: Record<string, Article>) {
-  panel = models ?? {};
+export function setReference(_models: Record<string, string>, clauses: Record<string, Article>) {
   articles = clauses ?? {};
 }
 const clauseTitle = (id: string) => articles[id]?.title ?? id;
@@ -142,164 +118,134 @@ function detailOf(tool: string, args: Record<string, any> = {}): string {
   return bits.length ? bits.join(" → ") : tool.replace(/_/g, " ");
 }
 
-const slider = (
-  side: Side, label: string, attr: string, key: string, value: number, max: number
-) => `<div class="meter edit">
-    <label>${paramLabel(label, key)}<span class="val">${value}</span></label>
-    <input type="range" min="0" max="${max}" value="${value}"
-           data-side="${side}" data-${attr}="${key}" />
-  </div>`;
-
-const weaponSlider = (n: Nation, w: (typeof WEAPONS)[number]) => {
-  const value = n.arsenal?.[w.id] ?? 0;
-  const max = w.id === "nuke" ? 5 : 30;
-  return `<div class="weapon-card edit ${w.id === "nuke" ? "nuke" : ""}">
-    ${weaponIcon(w.id)}
-    <div class="weapon-meta">
-      ${paramLabel(w.label, w.id)}
-      <span class="weapon-domain">${esc(w.domain)} system</span>
-    </div>
-    <span class="weapon-count val">${value}</span>
-    <input type="range" min="0" max="${max}" value="${value}"
-           aria-label="${esc(w.label)} inventory" data-side="${n.side}" data-arm="${w.id}" />
-  </div>`;
+type HudNationSnapshot = {
+  budget: number;
+  unrest: number;
+  arsenal: Record<string, number>;
 };
 
-/** Before the war the panel is a control surface; after it, a readout. */
-function setupPanel(n: Nation): string {
-  const stats = METERS.map(([key, label]) =>
-    slider(n.side, label, "field", key as string, n[key] as number, 100)
-  ).join("");
+type HudSnapshot = {
+  west: HudNationSnapshot;
+  east: HudNationSnapshot;
+  councilBudget: number;
+  dead: number;
+};
 
-  // Money and the home front are the only non-military opening controls.
-  const country = [
-    slider(n.side, "treasury ($B)", "field", "budget", n.budget, 300),
-    slider(n.side, "public unrest", "field", "unrest", n.unrest, 100),
-  ].join("");
+let previousHud: HudSnapshot | null = null;
 
-  const arms = WEAPONS.map((w) => weaponSlider(n, w)).join("");
+const magnitude = (n: number) => {
+  const value = Math.abs(n);
+  return Number.isInteger(value) ? count(value) : value.toFixed(1);
+};
 
-  return `${flag(n, true)}
-    ${n.blurb ? `<p class="blurb">${esc(n.blurb)}</p>` : ""}
-    ${n.creed ? `<p class="creed">argues from ${esc(n.creed)}</p>` : ""}
-    <div class="block metrics-block"><div class="tag">opening position</div>${stats}</div>
-    <div class="block homefront-block">${country}</div>
-    <div class="block arsenal-block"><div class="tag">arsenal${info("arsenal")}</div>${arms}</div>`;
-}
+/** A transient, signed callout; its colour reflects whether the change helped. */
+const deltaBadge = (
+  delta: number,
+  unit: "number" | "percent" | "money",
+  higherIsBetter: boolean,
+) => {
+  if (!delta) return "";
+  const direction = delta > 0 ? "+" : "−";
+  const amount = unit === "money"
+    ? `$${magnitude(delta)}B`
+    : `${magnitude(delta)}${unit === "percent" ? "%" : ""}`;
+  const helped = delta > 0 === higherIsBetter;
+  const verb = delta > 0 ? "increased" : "decreased";
+  return `<span class="stat-change ${helped ? "good" : "bad"}"
+    aria-label="${verb} by ${esc(amount)}">${direction}${esc(amount)}</span>`;
+};
 
-function readoutPanel(n: Nation): string {
-  const meters = METERS.map(([key, label]) => {
-    const v = n[key] as number;
-    return `<div class="meter">
-      <label>${paramLabel(label, key as string)}<span class="meter-value">${v}</span></label>
-      <div class="track"><div class="fill ${v < 30 ? "low" : ""}" style="width:${v}%"></div></div>
-    </div>`;
-  }).join("");
+const radial = (
+  label: string,
+  value: string,
+  percent: number,
+  danger = false,
+  delta = 0,
+  higherIsBetter = true,
+) =>
+  `<div class="radial ${danger ? "danger" : ""} ${delta ? "changed" : ""}"
+    style="--value:${Math.max(0, Math.min(100, percent))}">
+    ${deltaBadge(delta, danger ? "percent" : "money", higherIsBetter)}
+    <div class="radial-copy"><strong>${esc(value)}</strong><span>${esc(label)}</span></div>
+  </div>`;
 
-  // Pressure bars run the other way: full is fatal, so they are never green.
-  const pressures = PRESSURES.map(([key, label, cls]) => {
-    const v = n[key] as number;
-    const hot = cls !== "spin" && v >= 70 ? " hot" : "";
-    return `<div class="meter">
-      <label>${paramLabel(label, key as string)}<span class="meter-value">${v}</span></label>
-      <div class="track"><div class="fill ${cls}${hot}" style="width:${v}%"></div></div>
-    </div>`;
-  }).join("");
-
-  const economy = `<div class="d">${paramLabel("treasury", "budget")}<span class="pct">${usd(n.budget)}</span></div>`;
-
-  // Defences are shown as what they actually do — the share of an incoming salvo that
-  // gets shot down — rather than as a bare number nobody can price. The percentage is
-  // the engine's own INTERCEPT_DIVISOR and CEILING; a hardened domain gets the dome.
-  const defenses = Object.entries(n.defenses)
-    .map(([d, v]) => {
-      const turns = n.effects?.shield?.[d] ?? 0;
-      const stops = Math.round(Math.min(0.72, v / 105) * 100);
-      const cover = turns > 0 ? `<span class="shield">◈ hardened ${turns}t</span>` : "";
-      const mark = d === "air" ? "⌃" : d === "naval" ? "≈" : "⌁";
-      return `<div class="d defense-row ${turns > 0 ? "hard" : ""}">
-        <span class="defense-name"><i>${mark}</i>${paramLabel(d, `defense_${d}`)}</span>
-        ${cover}<span class="pct">${stops}% intercept</span></div>`;
-    })
-    .join("");
-
-  // Everything currently acting on this nation without anyone spending a turn on it.
-  const fx = n.effects ?? {
-    shield: {}, morale_buffer: 0, blockaded: 0, sanctioned: 0, spin: 0, deficit_turns: 0,
-  };
-  const status = [
-    fx.blockaded > 0 ? `<span class="chip bad">blockaded ${fx.blockaded}t</span>` : "",
-    fx.sanctioned > 0 ? `<span class="chip bad">sanctioned ${fx.sanctioned}t</span>` : "",
-    fx.deficit_turns > 0 ? `<span class="chip bad">bankrupt ${fx.deficit_turns}t</span>` : "",
-    n.strike_streak >= 2
-      ? `<span class="chip bad">forces spent</span>`
-      : n.strike_streak === 1
-        ? `<span class="chip warn">fatigued</span>`
-        : "",
-  ].filter(Boolean).join("");
-
-  // Rounds remaining. Spent racks stay visible but dim — running dry is information.
-  const arsenal = WEAPONS.map((w) => {
+/** The whole public nation surface: two vital signs and three recognizable weapons. */
+function compactPanel(n: Nation, previous?: HudNationSnapshot): string {
+  const arsenal = VISIBLE_WEAPONS.map((w) => {
     const left = n.arsenal?.[w.id] ?? 0;
-    const cls = ["weapon-card", left === 0 ? "spent" : "", w.id === "nuke" ? "nuke" : ""].join(" ");
-    const pips = w.id === "nuke" ? "☢".repeat(left) : "▮".repeat(Math.min(left, 10));
-    return `<div class="${cls}">
+    const delta = previous ? left - (previous.arsenal[w.id] ?? 0) : 0;
+    const cls = [
+      "hud-weapon",
+      left === 0 ? "spent" : "",
+      w.id === "nuke" ? "nuke" : "",
+      delta ? "changed" : "",
+    ].join(" ");
+    const label = w.id === "cruise_missile" ? "missiles" : w.id === "drone_swarm" ? "drones" : "nuclear";
+    return `<div class="${cls}" title="${esc(PARAM_HELP[w.id])}">
+      ${deltaBadge(delta, "number", true)}
       ${weaponIcon(w.id)}
-      <div class="weapon-meta">${paramLabel(w.label, w.id)}<span class="weapon-domain">${esc(w.domain)} system</span></div>
-      <span class="pips" aria-hidden="true">${pips}</span>
-      <span class="weapon-count" title="${left} remaining">${left}</span>
+      <span class="hud-weapon-name">${label}</span>
+      <strong>${left}</strong>
     </div>`;
   }).join("");
 
-  return `${flag(n)}
-    ${status ? `<div class="chips">${status}</div>` : ""}
-    ${meters}
-    <div class="block pressure-block">${pressures}</div>
-    <div class="block toll-block"><div class="tag">the dead</div>
-      <div class="d toll-line">${paramLabel("civilians and service dead", "casualties")}
-        <span class="n">${count(n.casualties ?? 0)}</span></div>
+  return `<div class="hud-vitals">
+      ${flag(n)}
+      <div class="radials">
+        ${radial("treasury", usd(n.budget), n.budget, false, previous ? n.budget - previous.budget : 0)}
+        ${radial("internal pressure", `${n.unrest}%`, n.unrest, true, previous ? n.unrest - previous.unrest : 0, false)}
+      </div>
     </div>
-    <div class="block funds-block"><div class="tag">war funds</div>${economy}</div>
-    <div class="block defense-block"><div class="tag">air, sea and network defence${info("defenses")}</div>${defenses}</div>
-    <div class="block arsenal-block"><div class="tag">arsenal${info("arsenal")}</div>${arsenal}</div>`;
+    <div class="hud-arsenal">${arsenal}</div>`;
 }
 
-/**
- * Which model is sitting in this chair, on its own line under the country's name.
- *
- * Shown because a match between two different models is only worth anything if you can
- * see which was which. It used to hang off the end of a "western island" label, which
- * put a compass bearing on screen next to two islands drawn left and right and a lore
- * that calls them something else again — so the label is gone and the model stands on
- * its own. Nothing is drawn when the scripted cabinets are playing: there is no chair to
- * name, and an empty line would only push the country's description down.
- */
-function commander(n: Nation): string {
-  const model = panel[n.side];
-  return model && model !== "mock" ? `<div class="chair">${esc(model)}</div>` : "";
+function snapshot(state: GameState): HudSnapshot {
+  const nation = (n: Nation): HudNationSnapshot => ({
+    budget: n.budget,
+    unrest: n.unrest,
+    arsenal: Object.fromEntries(VISIBLE_WEAPONS.map((w) => [w.id, n.arsenal?.[w.id] ?? 0])),
+  });
+  return {
+    west: nation(state.west),
+    east: nation(state.east),
+    councilBudget: state.world.council_budget ?? 0,
+    dead: (state.west.casualties ?? 0) + (state.east.casualties ?? 0),
+  };
 }
 
-/** Sliders must survive their own state echo — re-rendering mid-drag would fight the user. */
-let setupShown = false;
+function restartChangeFlash(el: HTMLElement, changed: boolean) {
+  el.classList.remove("changed");
+  if (!changed) return;
+  // The host elements persist between renders, so force the next animation to restart.
+  void el.offsetWidth;
+  el.classList.add("changed");
+}
+
+export function resetStatChanges() {
+  previousHud = null;
+  for (const id of ["council-funds", "w-toll"]) $(id).classList.remove("changed");
+}
 
 export function renderState(state: GameState) {
-  const briefing = state.world.phase === "briefing";
-  if (!briefing || !setupShown) {
-    const build = briefing ? setupPanel : readoutPanel;
-    $("panel-west").innerHTML = build(state.west);
-    $("panel-east").innerHTML = build(state.east);
-    setupShown = briefing;
-  }
+  const nextHud = snapshot(state);
+  $("panel-west").innerHTML = compactPanel(state.west, previousHud?.west);
+  $("panel-east").innerHTML = compactPanel(state.east, previousHud?.east);
+  const councilDelta = previousHud ? nextHud.councilBudget - previousHud.councilBudget : 0;
   $("council-funds").innerHTML = `<span class="lbl">council funds${info("council_budget")}</span>
-    <b>${usd(state.world.council_budget ?? 0)}</b>`;
+    <b>${usd(nextHud.councilBudget)}</b>${deltaBadge(councilDelta, "money", true)}`;
+  restartChangeFlash($("council-funds"), Boolean(councilDelta));
   // The one world-level number that is not already drawn twice in the panels. Isolation
   // used to sit here as well and said nothing the two pressure bars did not.
-  const dead = (state.west.casualties ?? 0) + (state.east.casualties ?? 0);
+  const dead = nextHud.dead;
+  const deadDelta = previousHud ? dead - previousHud.dead : 0;
   $("w-toll").innerHTML = dead
     ? `<span class="lbl">dead${info("casualties")}</span> <b>${count(dead)}</b>
        <span class="split">${esc(state.west.name)} ${count(state.west.casualties)} ·
-       ${esc(state.east.name)} ${count(state.east.casualties)}</span>`
+       ${esc(state.east.name)} ${count(state.east.casualties)}</span>
+       ${deltaBadge(deadDelta, "number", false)}`
     : "";
+  restartChangeFlash($("w-toll"), Boolean(deadDelta));
+  previousHud = nextHud;
   renderTalks(state);
   $("turn").textContent = `turn ${state.world.turn}`;
   $("phase").textContent = state.world.talks?.open ? "ceasefire" : state.world.phase;
@@ -485,7 +431,6 @@ export function renderEvent(
 }
 
 export function clearStage() {
-  setupShown = false;
   for (const s of ["west", "east"] as Side[]) {
     delete pendingVerdicts[s];
     delete waitingBubbles[s];
@@ -640,17 +585,15 @@ const option = (value: string, text: string) =>
  *
  * Three controls and no more: which war, which turn, how fast. It exists so the UI can
  * be worked on against a real match without a model being called, which means it is
- * itself part of the UI being worked on — hence living in the header next to the mode
- * pill rather than in a debug drawer somebody has to go and open.
+ * itself part of the UI being worked on — hence living in the bottom runtime strip
+ * rather than in a debug drawer somebody has to go and open.
  *
  * Shown only when a recording is loaded. A build serving live matches never sees it.
  */
 export function renderReplay(block: ReplayBlock | null) {
   const bar = $("replay");
-  const note = $("replay-note");
   if (!block) {
     bar.classList.add("hidden");
-    note.classList.add("hidden");
     return;
   }
   bar.classList.remove("hidden");
@@ -671,15 +614,6 @@ export function renderReplay(block: ReplayBlock | null) {
   $<HTMLSelectElement>("replay-seek").value = "";
   $<HTMLSelectElement>("replay-speed").value = String(block.speed);
 
-  const ending = block.current.complete
-    ? esc(block.current.outcome)
-    : "this recording stops mid-war — it was never played to a verdict";
-  note.classList.remove("hidden");
-  note.innerHTML = `<b>replaying “${esc(block.current.name)}”</b> — ${esc(
-    block.current.title
-  )}. ${block.current.turns} turns, ${count(block.current.dead)} dead. The deck below is
-    live for reading the files, but the war is already chosen: <em>adopt resolution</em> plays this
-    one back. <span class="dim">${ending}</span>`;
 }
 
 export { $ };

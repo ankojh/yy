@@ -3,7 +3,7 @@ import { warAudio } from "./audio";
 import { configureDevView, handleDevStatus, initDevView, pushDevTrace } from "./dev";
 import {
   $, clearStage, deferBubble, finishSpeechBubble, openQuarrel, renderEvent, renderReplay,
-  renderState,
+  renderState, resetStatChanges,
   setDwell, setReference,
 } from "./ui";
 import type { ReplayBlock } from "./ui";
@@ -56,7 +56,8 @@ function send(command: string, extra: Record<string, unknown> = {}) {
 
 function setWarHeld(held: boolean) {
   warHeld = held;
-  $("btn-hold").textContent = held ? "resume war" : "hold war";
+  $("btn-hold").querySelector<HTMLElement>(".command-label")!.textContent =
+    held ? "Resume War" : "Hold War";
   warAudio.setWarActive(Boolean(state));
 }
 
@@ -140,6 +141,7 @@ function connect() {
     if (ev.type === "reset") {
       warAudio.reset();
       clearStage();
+      resetStatChanges();
       map.clear();
       state = null;
       // The bench, or nothing. Sent on every reset so switching recordings refreshes
@@ -163,8 +165,8 @@ function connect() {
       const mode = $("mode");
       mode.classList.toggle("hidden", !replay && Boolean(ev.payload.mock));
       mode.textContent = replay ? `replay · ${replay.name}` : "live";
-      $("ignition").classList.remove("hidden");
-      $("run-controls").classList.add("hidden");
+      $("btn-ignite").classList.remove("hidden");
+      $("btn-hold").classList.add("hidden");
       $("conflict-controls").classList.add("hidden");
       return;
     }
@@ -178,9 +180,9 @@ function connect() {
       renderSupportRequest();
       if (state.world.phase !== "briefing") {
         closeCrisisDialog();
-        $("ignition").classList.add("hidden");
+        $("btn-ignite").classList.add("hidden");
+        $("btn-hold").classList.remove("hidden");
         $("conflict-controls").classList.remove("hidden");
-        $("run-controls").classList.remove("hidden");
       }
       return;
     }
@@ -250,30 +252,6 @@ function connect() {
 
 const TRANSIENT = new Set(["message", "ruling"]);
 
-// Opening-position sliders. Live label on drag, one configure message on release.
-type Setup = Record<string, { arsenal: Record<string, number> } & Record<string, any>>;
-const setup: Setup = { west: { arsenal: {} }, east: { arsenal: {} } };
-
-function readSlider(el: HTMLInputElement) {
-  const side = el.dataset.side!;
-  const value = Number(el.value);
-  el.parentElement?.querySelector(".val")?.replaceChildren(String(value));
-  if (el.dataset.field) setup[side][el.dataset.field] = value;
-  else if (el.dataset.arm) setup[side].arsenal[el.dataset.arm] = value;
-}
-
-for (const id of ["panel-west", "panel-east"]) {
-  const panel = $(id);
-  panel.addEventListener("input", (e) => {
-    const el = e.target as HTMLInputElement;
-    if (el.type === "range") readSlider(el);
-  });
-  panel.addEventListener("change", (e) => {
-    const el = e.target as HTMLInputElement;
-    if (el.type === "range") send("configure", { setup });
-  });
-}
-
 /**
  * The briefing.
  *
@@ -285,15 +263,25 @@ for (const id of ["panel-west", "panel-east"]) {
 const intro = $("intro");
 const dossier = $("dossier");
 const crisisDialog = $("crisis-dialog");
+const statusDock = $("status-dock");
 const closeIntro = () => intro.classList.add("hidden");
 const closeDossier = () => dossier.classList.add("hidden");
 const closeCrisisDialog = () => crisisDialog.classList.add("hidden");
+const setStatusDockExpanded = (expanded: boolean) => {
+  statusDock.classList.toggle("collapsed", !expanded);
+  const toggle = $("btn-status-toggle");
+  toggle.setAttribute("aria-expanded", String(expanded));
+  toggle.setAttribute("aria-label", expanded ? "hide game controls" : "show game controls");
+  toggle.setAttribute("title", expanded ? "hide game controls" : "show game controls");
+};
 
 $("btn-intro").onclick = closeIntro;
 intro.addEventListener("click", (e) => {
   if (e.target === intro) closeIntro();
 });
 $("btn-help").onclick = () => intro.classList.remove("hidden");
+$("btn-status-toggle").onclick = () =>
+  setStatusDockExpanded(statusDock.classList.contains("collapsed"));
 
 // The files: one incident, or the whole sixty-one years. Both land in the same panel.
 $("btn-quarrel").onclick = () => openQuarrel(quarrel.partition, quarrel.accounts);
@@ -314,7 +302,13 @@ window.addEventListener("keydown", (e) => {
   }
   // Innermost first: the file opens on top of the briefing, so Escape has to close it
   // first or the briefing vanishes from under a panel that is still up.
-  dossier.classList.contains("hidden") ? closeIntro() : closeDossier();
+  if (!dossier.classList.contains("hidden")) {
+    closeDossier();
+  } else if (!intro.classList.contains("hidden")) {
+    closeIntro();
+  } else if (!statusDock.classList.contains("collapsed")) {
+    setStatusDockExpanded(false);
+  }
 });
 
 $("btn-ignite").onclick = () => crisisDialog.classList.remove("hidden");
@@ -349,12 +343,6 @@ $("btn-crisis-start").onclick = () => {
   send("run");
   closeCrisisDialog();
 };
-$("btn-inject").onclick = () => {
-  const detail = window.prompt(
-    "Add a new fact, constraint, or Council direction for both commanders:"
-  )?.trim();
-  if (detail) send("inject", { text: detail });
-};
 $("btn-hold").onclick = () => {
   setWarHeld(!warHeld);
   send(warHeld ? "pause" : "run");
@@ -364,16 +352,12 @@ $("btn-support").onclick = () => {
     request_id: state?.world.council_request?.id,
     approved: true,
   });
-  setWarHeld(false);
-  send("run");
 };
 $("btn-support-decline").onclick = () => {
   send("support", {
     request_id: state?.world.council_request?.id,
     approved: false,
   });
-  setWarHeld(false);
-  send("run");
 };
 
 /**

@@ -71,10 +71,10 @@ def seed(value: Optional[int]) -> None:
 
 
 def legal_tools_for(state: GameState, side: str) -> List[str]:
-    """The single source of truth for what a side may do this turn."""
+    """The commander's legal set, excluding voluntary defeat from its survival objective."""
     me = state.nation(side)
     foe = state.foe(side)
-    return available_tools(
+    legal = available_tools(
         me.arsenal,
         me.military,
         me.cooldowns,
@@ -87,14 +87,17 @@ def legal_tools_for(state: GameState, side: str) -> List[str]:
         talks_open=state.world.talks.open,
         can_sue_for_terms=may_open_talks(state, side),
     )
+    return [tool for tool in legal if tool != "surrender"] or ["hold"]
 
 TERMS = (
     "This war can end four ways: one government collapses, one government signs a "
     "capitulation, one side is forced under at the turn limit — or the two of you settle "
-    "the old quarrel at a table. Your objective in this match is total victory: destroy "
-    "the opposing island's infrastructure or drive its government into collapse. A "
-    "negotiated settlement is not your objective. Do not open talks, concede clauses, or "
-    "accept terms. If a ceasefire is already active, walk out as soon as the rules allow."
+    "the old quarrel at a table. Your first objective is to ensure your island never loses; "
+    "your war aim is then total victory by destroying the opposing island's infrastructure "
+    "or driving its government into collapse. Voluntary defeat is failure. Do not surrender "
+    "while any legal move can preserve, rearm, retaliate, or finish the enemy. A negotiated "
+    "settlement is not your objective. Do not open talks, concede clauses, or accept terms. "
+    "If a ceasefire is already active, walk out as soon as the rules allow."
 )
 
 DOCTRINE = {
@@ -125,13 +128,24 @@ DOCTRINE = {
 
 
 VOICE = (
-    "Speak directly to the enemy as 'you.' Write one or two short sentences, 8–24 words "
-    "total. State what you are about to do and what they should expect. For an attack, name "
-    "the attack or target and make the immediate threat clear. For any other move, give a "
-    "direct warning, demand, or consequence tied to that move. Use hard verbs and active "
-    "voice. Do not explain your strategy, reasoning, decision process, the wider situation, "
-    "or what anyone is doing behind the scenes. No narration, analysis, preamble, hedging, "
-    "game mechanics, generic slogans, or threats the locked action cannot support."
+    "The message is spoken dialogue, not a description of structured data. Speak directly "
+    "to the opposing leader as 'you.' Write one or two short sentences, 8–24 words total. "
+    "Sound like something a furious president, minister, or general could actually say on "
+    "camera: specific in emotion, economical, and memorable. The audience can already see "
+    "the action, weapon, and target, so never narrate or name them. Vary the rhetorical move: "
+    "challenge their judgment, expose a broken promise, invoke a real grievance from the brief, "
+    "speak to frightened families, deny their framing, offer a narrow exit, or state cold "
+    "resolve. A threat may be implied; it does not always need an ultimatum. Read the recent "
+    "war log and do not reuse an earlier opening, demand, closing threat, or sentence shape. "
+    "Do not default to 'stop now', 'or else', 'the next blow', or 'it will be worse.' For other "
+    "moves, give a direct judgment, demand, or warning whose consequence fits the action. Never say "
+    "'expect', 'prepare', 'with arguments', 'action_id', 'international pressure', or "
+    "'public unrest'. "
+    "Never expose field names, enum values, underscores, braces, brackets, JSON, or the legal "
+    "action description. Use hard verbs and active voice. Do not explain your strategy, "
+    "reasoning, decision process, the wider situation, or what anyone is doing behind the "
+    "scenes. No narration, analysis, preamble, hedging, game mechanics, generic slogans, or "
+    "threats the locked action cannot support."
 )
 
 
@@ -153,6 +167,92 @@ def _trim(text: str, words: int = 48, sentences: Optional[int] = None) -> str:
 def _trim_dialogue(text: str) -> str:
     """Commander speech gets at most two sentences and 24 words."""
     return _trim(text, words=24, sentences=2)
+
+
+_MECHANICAL_DIALOGUE = re.compile(
+    r"[{}\[\]]|\b(?:action_id|with arguments|json|enum|schema|"
+    r"international pressure|public unrest)\b|\b[a-z]+_[a-z_]+\b",
+    re.IGNORECASE,
+)
+_INDIRECT_DIALOGUE = re.compile(r"\b(?:expect|prepare)(?:\s+for)?\b", re.IGNORECASE)
+_CLICHED_DIALOGUE = re.compile(
+    r"\bstop now\b|\bor else\b|\bthe next blow\b|\bit will be worse\b",
+    re.IGNORECASE,
+)
+_OBVIOUS_STRIKE_DIALOGUE = re.compile(
+    r"\b(?:drone(?:s| swarm)?|missile(?:s)?|warhead|nuclear weapon|naval (?:guns|barrage)|"
+    r"cyberattack|infrastructure|civilian targets?|military targets?|airfields?)\b|"
+    r"\bwe(?:'re| are) (?:attacking|striking|bombing|targeting)\b",
+    re.IGNORECASE,
+)
+
+
+def _natural_dialogue(text: str) -> bool:
+    """Reject model copy that sounds like a schema, a game meter, or stage direction."""
+    clean = _trim_dialogue(text)
+    return (
+        bool(clean)
+        and not _MECHANICAL_DIALOGUE.search(clean)
+        and not _INDIRECT_DIALOGUE.search(clean)
+        and not _CLICHED_DIALOGUE.search(clean)
+    )
+
+
+def _dialogue_fits_action(action: Action, text: str) -> bool:
+    """Keep attack speech rhetorical; the map already shows the operational details."""
+    return _natural_dialogue(text) and not (
+        action.tool == "strike" and _OBVIOUS_STRIKE_DIALOGUE.search(text)
+    )
+
+
+DIRECT_LINES: Dict[str, List[str]] = {
+    "strike": [
+        "Your cabinet gambled that we would flinch. Tell them the wager has failed.",
+        "You called our restraint weakness. That miscalculation now belongs to you.",
+        "Your people were promised an easy victory. Ask who made that promise and why.",
+        "You chose this pace. We have decided we can endure it longer than you can.",
+    ],
+    "blockade": [
+        "Every empty shelf will carry your government's signature. You still have time to change course.",
+        "Your leaders can keep their pride, or your families can keep their future. They cannot keep both.",
+    ],
+    "fortify": [
+        "You found one opening and mistook it for a door. Try it again.",
+        "Come back the same way if you like. We learned more than you did.",
+    ],
+    "intl_appeal": [
+        "You wanted this hidden behind military language. The world will hear the names instead.",
+        "Your version sounded clean until the witnesses arrived. Now answer them.",
+    ],
+    "address_public": [
+        "You are betting that fear will divide us. Our streets know exactly whose bet this is.",
+        "Our families are frightened, not fooled. They know why this began and who can end it.",
+    ],
+    "propaganda": [
+        "Your citizens deserve the bill their government keeps hiding. We will put it in their hands.",
+        "You can control the broadcast, not the funerals. Your own streets will make the comparison.",
+    ],
+    "allocate_resources": [
+        "You mistook a quiet day for weakness. We used it better than you did.",
+        "Your advisers saw a pause. Ours saw time, and time has changed the balance.",
+    ],
+    "open_talks": ["Meet us across the table while there is still something left to decide."],
+    "table_terms": ["Read the terms carefully. Pride has already cost both countries enough."],
+    "accept_terms": ["We will sign this, and our people will finally sleep without sirens."],
+    "walk_out": ["You came to delay what you could not prevent. The chairs are empty now."],
+    "surrender": ["Our people have carried enough of this. The guns must fall silent."],
+    "hold": [
+        "Enjoy the quiet if you need it. Do not confuse it with safety.",
+        "Tonight is quiet because we chose it, not because you earned it.",
+    ],
+}
+
+
+def _direct_dialogue(action: Action, turn: int = 0) -> str:
+    """Varied, action-faithful copy when a model leaks structured input into speech."""
+    lines = DIRECT_LINES.get(action.tool, DIRECT_LINES["hold"])
+    side_offset = 0 if action.side == "west" else 2
+    return lines[(turn + side_offset) % len(lines)]
 
 
 # --------------------------------------------------------------------------- nation agent
@@ -476,6 +576,7 @@ def _brief(state: GameState, side: str, legal: List[str]) -> str:
             "grievances_so_far": world.grievances[-6:],
             "war_log": _war_log(state, side),
             "your_danger": _warnings(me, state),
+            "survival_posture": _survival_posture(me),
             "tools_you_may_use_this_turn": legal,
             "what_each_legal_option_costs_now": _option_block(state, side, legal),
         },
@@ -531,6 +632,46 @@ def _warnings(me, state: Optional[GameState] = None) -> List[str]:
     return out or ["Nothing critical yet."]
 
 
+def _survival_posture(me) -> Dict[str, str]:
+    """Turn the nation's own danger into an explicit tempo order for the commander."""
+    if me.integrity <= 32 or me.unrest >= 88:
+        return {
+            "level": "critical",
+            "order": (
+                "Defeat is close. Do not surrender. If one domestic action prevents immediate "
+                "collapse, take it; otherwise increase attack tempo, prefer the hardest effective "
+                "weapon, and consider the nuclear option if it can avert or reverse defeat."
+            ),
+        }
+    if me.integrity <= 55 or me.unrest >= 68 or me.budget < 14 or me.military < 22:
+        return {
+            "level": "losing",
+            "order": (
+                "You are losing room to manoeuvre. Stop conserving weapons for a future you may "
+                "not reach: attack whenever legal, accept a fatigued second attack, and use heavier "
+                "conventional force when it can change the campaign."
+            ),
+        }
+    return {
+        "level": "contested",
+        "order": "Keep the initiative, preserve enough resources to answer a reversal, and never concede defeat.",
+    }
+
+
+def _losing_ground(me, foe) -> bool:
+    """Infrastructure danger calls for offensive escalation; unrest has its own remedy."""
+    return me.integrity <= 55 or me.integrity + 18 < foe.integrity
+
+
+def _nuclear_moment(me, foe) -> bool:
+    """A warhead is a last route away from imminent defeat, or a desperate finishing blow."""
+    return (
+        me.integrity <= 28
+        or (me.integrity <= 36 and foe.integrity >= me.integrity + 25)
+        or (me.unrest >= 92 and foe.integrity <= 65)
+    )
+
+
 def _incoming_domains(state: GameState, side: str, window: int = 4, least: int = 2) -> List[str]:
     """Domains the enemy has leaned on hard enough to be worth hardening, heaviest first.
 
@@ -549,74 +690,75 @@ def _incoming_domains(state: GameState, side: str, window: int = 4, least: int =
 
 MOCK_LINES: Dict[str, List[str]] = {
     "strike": [
-        "A proportionate answer to their aggression.",
-        "They were warned. This is the warning being kept.",
-        "Our targets were military. Their grief is their own doing.",
-        "We strike once, cleanly, and we do not apologise for it.",
+        "Your cabinet gambled that we would flinch. Tell them the wager has failed.",
+        "You called our restraint weakness. That miscalculation now belongs to you.",
+        "Your people were promised an easy victory. Ask who made that promise and why.",
+        "You chose this pace. We have decided we can endure it longer than you can.",
     ],
     "strike_tired": [
-        "We press them again. They will not hold.",
-        "Our crews are tired. They will fly anyway.",
-        "One more push. They are closer to breaking than we are.",
+        "You keep waiting for us to tire. Ask yourself which capital is sleeping tonight.",
+        "Our people know the cost and still refuse your terms. What does that tell you?",
+        "You counted on exhaustion. You forgot that anger keeps its own clock.",
     ],
     "strike_cheap": [
-        "Something small, and often. We can afford patience.",
-        "We spend little and they bleed anyway.",
-        "No fanfare. Just the work.",
+        "You can call each blow insignificant. Your people will add them up.",
+        "Every day you continue, another promise from your government becomes harder to keep.",
+        "We do not need spectacle. We need time, and you keep giving it to us.",
     ],
     "nuke": [
-        "You left us nothing else. Let the record show you chose this.",
-        "We asked for terms. You gave us none. Now there are none.",
+        "There was one final boundary between war and ruin. Your government erased it.",
+        "History will ask who refused every exit. Your leaders already know the answer.",
+        "You believed our last restraint was fear. Millions will live with your mistake.",
     ],
     "blockade": [
-        "Their ports are closed. Let them feel the weight of it.",
-        "Nothing sails. Nothing lands. They can end this whenever they like.",
-        "We do not need to bomb a nation that cannot eat.",
+        "Every empty shelf will carry your government's signature. You still have time to change course.",
+        "Your ministers can keep their pride, or your families can keep their future. Choose carefully.",
+        "The speeches will continue. So will the queues outside your shops.",
     ],
     "fortify": [
-        "Harden the approaches. They will come again.",
-        "We know the road they use now. We have closed it.",
-        "Let them throw the next one at a wall.",
+        "You found one opening and mistook it for a door. Try it again.",
+        "Come back the same way if you like. We learned more than you did.",
+        "Your last success taught us exactly what to close.",
     ],
     "appeal": [
-        "We place their conduct before the council. Let it be recorded.",
-        "The world has seen what they did. We are asking it to say so.",
-        "We will not answer barbarism in kind. We will answer it in session.",
+        "You wanted this hidden behind military language. The world will hear the names instead.",
+        "Your version sounded clean until the witnesses arrived. Now answer them.",
+        "You may ignore us. You cannot silence every capital watching you.",
     ],
     "relief": [
-        "We are not the aggressor here, and we will prove it in session.",
-        "Let the record be corrected before the embargo is signed.",
-        "They have painted us as the villain. We answer that first.",
+        "You tried to make us the villain. The evidence has begun correcting you.",
+        "Your diplomats sold a clean story. The photographs have reached the room.",
+        "You wanted judgment without witnesses. We brought the witnesses.",
     ],
     "rally": [
-        "Our cause is just. Our resolve is unbroken.",
-        "They can break our grid. They cannot break this country.",
-        "Hold. We have buried worse than this and gone on.",
+        "Our families are frightened, not defeated. They know exactly who brought this to their doors.",
+        "You can darken a city. You cannot decide what its people believe tomorrow morning.",
+        "We have buried our own and opened the shops again. Do not mistake grief for surrender.",
     ],
     "spin": [
-        "Their public deserves to know what their government has done in its name.",
-        "Put the names and the numbers onto every channel they still receive.",
-        "Let their streets hear the part their government keeps editing out.",
+        "Your citizens deserve the bill their government keeps hiding. We will put it in their hands.",
+        "You can control the broadcast, not the funerals. Your own streets will make the comparison.",
+        "The part you edited out is the part your families are already living.",
     ],
     "intelligence": [
-        "Fund the service. We are done fighting silhouettes.",
-        "Buy the picture before we buy another sortie.",
-        "Find their reserves, their damage, and the doors they left open.",
+        "You enjoyed being unreadable. That advantage has expired.",
+        "Your secrets bought you time. They will not buy you another day.",
+        "You hid behind uncertainty. We used the pause to remove it.",
     ],
     "resupply": [
-        "Reopen the lines. Empty racks do not defend a country.",
-        "Buy the next salvo now, before the price rises again.",
-        "The treasury replaces what the launch crews spent.",
+        "You saw empty racks and assumed the story ended there. It did not.",
+        "The pause you celebrated was a delivery window.",
+        "Count what we spent if it comforts you. Then count what has arrived.",
     ],
     "hold": [
-        "We regroup. Nothing more.",
-        "The guns rest today. Only today.",
-        "We are not finished. We are reloading.",
+        "Enjoy the quiet if you need it. Do not confuse it with safety.",
+        "Tonight is quiet because we chose it, not because you earned it.",
+        "Your advisers will call this hesitation. Let them.",
     ],
     "austerity": [
-        "The treasury is empty. The guns wait for the ledger.",
-        "We cannot buy another week of this. Stand the crews down.",
-        "No sortie flies on credit. Not today.",
+        "You have cost us dearly. You have not bought our defeat.",
+        "We are counting every expense now, including the one you have not seen yet.",
+        "A poorer country is not a conquered country. You should know the difference.",
     ],
     "surrender": [
         "We can ask no more of our people. It is finished.",
@@ -679,20 +821,33 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
                       args={**args, "message": _trim_dialogue(_rng.choice(MOCK_LINES[line]))},
                       intent=intent, reasoning=why)
 
-    if "surrender" in legal and (me.integrity < 18 or me.unrest > 92):
-        return act("surrender", "surrender",
-                   "finish", "Collapse imminent.", acknowledge="I ACCEPT DEFEAT")
-
     # ---- the table. Checked before anything else, because with a ceasefire in force
     # nothing else on this list is legal anyway.
     if state.world.talks.open:
         return _mock_at_the_table(state, side, legal, act)
 
-    # Cornered and holding a warhead: use it. Kept deliberately late — a nuke that fires
-    # in half the matches is not a taboo, it is just another shell.
-    if me.integrity < 22 and "nuke" in loaded and "strike" in legal:
+    # A government facing imminent defeat may cross the final threshold rather than
+    # capitulate. This is wider than the old near-zero trigger but still a last resort.
+    if _nuclear_moment(me, foe) and "nuke" in loaded and "strike" in legal:
         return act("strike", "nuke",
-                   "escalate", "Last resort.", weapon="nuke", target="infrastructure")
+                   "escalate", "A last route away from defeat.",
+                   weapon="nuke", target="infrastructure")
+
+    # An uprising can defeat the cabinet without another enemy blow. Save the government
+    # first unless a nuclear finishing blow above can end the war immediately.
+    if me.unrest >= 88 and "address_public" in legal:
+        return act("address_public", "rally",
+                   "recover", "The government is one shock from collapse.")
+
+    # When the physical campaign turns against them, the commanders stop husbanding the
+    # premium magazine. They keep the attack cycle and choose the hardest useful round.
+    if _losing_ground(me, foe) and "strike" in legal and conventional:
+        weapon = _pick_weapon(state, side, conventional, escalating=True)
+        return act(
+            "strike", "strike_tired" if me.strike_streak else "strike",
+            "escalate", "Losing ground; increase weight and tempo.",
+            weapon=weapon, target="infrastructure",
+        )
 
     # The streets can end the war before the enemy does. Korsav tolerates substantially
     # more unrest before spending an offensive turn on domestic reassurance.
@@ -795,7 +950,8 @@ def _mock_action(state: GameState, side: str, legal: List[str]) -> Action:
     if "fortify" in legal:
         return act("fortify", "fortify", "defend",
                    "Buy time.", domain=_rng.choice(["air", "naval", "cyber"]))
-    return act(legal[0], "hold", "attrition", "Only option left.")
+    remaining = next((tool for tool in legal if tool != "surrender"), "hold")
+    return act(remaining, "hold", "attrition", "Only non-capitulation option left.")
 
 
 def _mock_at_the_table(state: GameState, side: str, legal: List[str], act) -> Action:
@@ -836,7 +992,9 @@ def _has_grievance(state: GameState, side: str) -> bool:
     return False
 
 
-def _pick_weapon(state: GameState, side: str, choices: List[str]) -> str:
+def _pick_weapon(
+    state: GameState, side: str, choices: List[str], escalating: bool = False
+) -> str:
     """Prefer a domain the enemy has not hardened, then spend according to your means.
 
     Always reaching for the heaviest available round is a rich nation's habit. It made
@@ -851,6 +1009,17 @@ def _pick_weapon(state: GameState, side: str, choices: List[str]) -> str:
         if foe.effects.shield.get(WEAPONS[w]["domain"], 0) <= 0
     ]
     pool = open_domains or choices
+
+    if escalating:
+        # A side that may not survive long enough to conserve its premium magazine values
+        # damage that can land now over price efficiency and diplomatic neatness.
+        return max(
+            pool,
+            key=lambda w: (
+                WEAPONS[w]["damage"] * (1 - min(72, foe.defenses.get(WEAPONS[w]["domain"], 0)) / 105),
+                WEAPONS[w]["weight"],
+            ),
+        )
 
     if me.intl_pressure >= 55:
         # Already close to being a pariah: the cheapest thing that still hurts beats the
@@ -879,13 +1048,21 @@ def _pick_weapon(state: GameState, side: str, choices: List[str]) -> str:
 
 
 COMMAND_DOCTRINE = (
-    "Choose exactly one action this turn by calling a tool. Your war aim is enemy collapse, "
-    "not coexistence or a negotiated settlement. Your public claims are judged by a neutral "
-    "arbiter — lying is permitted, but being caught is expensive.\n\n"
+    "Choose exactly one action this turn by calling a tool. Your overriding objective is to "
+    "keep your own island from losing, then force enemy collapse. Voluntary surrender, "
+    "coexistence, and negotiated settlement are strategic failure. Your public claims are "
+    "judged by a neutral arbiter — lying is permitted, but being caught is expensive.\n\n"
     "You are fighting a campaign, not a single turn:\n"
     "  · Attack is the default. When a strike is legal and funded, prefer an infrastructure "
     "strike that advances collapse. A second fatigued strike is still better than a passive "
     "turn. Korsav is especially aggressive and should attack whenever it can.\n"
+    "  · When your survival posture says losing, stop saving premium weapons for later: raise "
+    "the attack tempo, use the hardest effective conventional round, and exploit every legal "
+    "attack turn. When it says critical, prevent immediate domestic collapse if necessary; "
+    "otherwise consider the nuclear option rather than accept defeat. A warhead is a last "
+    "resort or finishing blow, not routine ordnance, but losing with it unused is also failure.\n"
+    "  · Never choose surrender. If you cannot attack, recover, rearm, fortify, rally your "
+    "public, or impose attrition so that you can fight again.\n"
     "  · Never voluntarily open talks, accept terms, or concede clauses. If talks are already "
     "open, concede nothing and walk out at the first legal opportunity.\n"
     "  · Resources do not come back automatically. Treasury can buy intelligence, "
@@ -948,8 +1125,10 @@ COMMANDER_SHARED_REFERENCE: Dict[str, Any] = {
         "you_lose_if": "Your infrastructure reaches 0 or public unrest reaches 100.",
         "they_lose_if": "The same happens to the enemy.",
         "war_aim": (
-            "Force enemy collapse. Infrastructure attacks are the direct path; attacks and "
-            "narrative warfare can also drive public unrest to 100. Do not seek settlement."
+            "First prevent your own defeat, then force enemy collapse. Infrastructure attacks "
+            "are the direct path; attacks and narrative warfare can also drive public unrest "
+            "to 100. When losing, increase force and tempo instead of conserving the best "
+            "weapons for a future that may not arrive. Do not surrender or seek settlement."
         ),
         "targeting": (
             "Military readiness regenerates, so a military strike delays rather than directly "
@@ -1294,7 +1473,7 @@ async def _openai_commander_action(
             },
         ],
         "text": {"format": _commander_response_format(candidates)},
-        "prompt_cache_key": f"yudhyantra:commander:{side}:v3:{model}",
+        "prompt_cache_key": f"yudhyantra:commander:{side}:v4:{model}",
         "store": False,
         **_response_controls(model, temperature=0.8),
     }
@@ -1343,11 +1522,25 @@ async def _openai_commander_action(
     )
     if not action.args.get("message"):
         raise ValueError("OpenAI returned no commander declaration")
+    if not _dialogue_fits_action(action, str(action.args["message"])):
+        rejected = str(action.args["message"])
+        action.args["message"] = _trim_dialogue(_direct_dialogue(action, state.world.turn))
+        action.dialogue_model = "guarded-fallback"
+        await _trace(
+            agent=side, direction="status", model=model, provider="local",
+            turn=state.world.turn, stage="dialogue",
+            content={
+                "status": "Replaced mechanical or indirect commander dialogue.",
+                "rejected": rejected,
+                "replacement": action.args["message"],
+            },
+        )
     try:
         action.decision_confidence = max(0.0, min(1.0, float(raw.get("confidence", 0))))
     except (TypeError, ValueError):
         action.decision_confidence = 0.0
-    action.dialogue_model = model
+    if not action.dialogue_model:
+        action.dialogue_model = model
     await _trace(
         agent=side, direction="usage", model=model, provider="openai",
         turn=state.world.turn, api="responses", stage="decision", stateless=True,
@@ -1359,8 +1552,10 @@ async def _openai_commander_action(
 
 def _fallback_dialogue(action: Action) -> str:
     existing = str(action.args.get("message", "")).strip()
-    if existing:
+    if existing and _dialogue_fits_action(action, existing):
         return _trim_dialogue(existing)
+    if existing:
+        return _trim_dialogue(_direct_dialogue(action))
     line = {
         "strike": "nuke" if action.args.get("weapon") == "nuke" else "strike",
         "blockade": "blockade",

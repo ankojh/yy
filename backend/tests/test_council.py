@@ -139,3 +139,32 @@ async def test_a_live_game_places_a_need_based_request_before_the_council():
     assert pending.side in ("west", "east")
     assert pending.kind in SUPPORT_ACTIONS
     assert game.log[-1].type == "support_request"
+
+
+@pytest.mark.asyncio
+async def test_a_pending_council_request_does_not_block_the_next_turn():
+    game = await started_game()
+    pending = request(game, "stabilization")
+    before = game.state.world.turn
+
+    await game.step()
+
+    assert game.state.world.turn == before + 1
+    assert game.state.world.council_request == pending
+
+
+@pytest.mark.asyncio
+async def test_run_loop_continues_with_a_pending_council_request():
+    game = await started_game()
+    request(game, "arms")
+    calls = 0
+
+    async def one_turn_then_finish():
+        nonlocal calls
+        calls += 1
+        game.state.world.phase = "over"
+
+    game.step = one_turn_then_finish  # type: ignore[method-assign]
+    await game.run()
+
+    assert calls == 1

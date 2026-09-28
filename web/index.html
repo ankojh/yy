@@ -87,63 +87,98 @@
     </div>
 
     <div class="shell">
-      <header>
-        <!-- The mark carries the name on its own. The wordmark under it is a tagline,
-             not a title, so it sits below the logo rather than beside it. -->
-        <div class="brand">
-          <img
-            class="logo"
-            src="/brand/yudhyantra-logo-header.png"
-            alt="yudh yantra — two Y-shaped combat drones forming the YY logo"
-          />
-          <h1 class="tagline">war machines</h1>
-        </div>
-        <div class="status">
-          <!-- The bench. Only ever shown when a recording is loaded: which war is
-               playing, how fast, and which turn to jump to. Filled from the reset
-               payload, so a build with no fixtures on disk simply never sees it. -->
-          <div class="replay hidden" id="replay">
-            <select id="replay-pick" title="which recorded match is playing"></select>
-            <select id="replay-seek" title="jump straight to a turn"></select>
-            <select id="replay-speed" title="playback speed">
-              <option value="0.5">0.5×</option>
-              <option value="1">1×</option>
-              <option value="2">2×</option>
-              <option value="4">4×</option>
-              <option value="8">8×</option>
-              <option value="16">16×</option>
-            </select>
-          </div>
-          <span id="mode" class="pill">connecting</span>
-          <span id="turn" class="pill">turn 0</span>
-          <span class="pill council-funds" id="council-funds"></span>
-          <span id="phase" class="pill">briefing</span>
-          <button
-            id="btn-dev"
-            class="pill ghost hidden"
-            aria-controls="dev-panel"
-            aria-pressed="false"
-            title="inspect live model prompts and responses"
-          >dev view</button>
-          <button
-            id="btn-sound"
-            class="pill ghost"
-            aria-pressed="true"
-            title="mute ambience, weapon effects, and island voices"
-          >sound on</button>
-          <button id="btn-help" class="pill ghost" title="what is this?">?</button>
-        </div>
-      </header>
-
-      <!-- Three full-height columns. The controls live inside the centre column rather
-           than in a strip underneath, so the two nation panels — which now carry a
-           dozen meters each — get the whole viewport to do it in. -->
+      <!-- One full-width theatre. Nation state is a translucent edge HUD over the map,
+           keeping the war visible instead of boxing it between two control panels. -->
       <main>
-        <section class="nation" id="panel-west"></section>
-
         <section class="theatre">
           <div class="stage">
             <canvas id="map"></canvas>
+            <!-- Brand and phase action float over the theatre instead of reserving a bar. -->
+            <div class="brand stage-brand">
+              <img
+                class="logo"
+                src="/brand/yudhyantra-logo-header.png"
+                alt="yudh yantra — two Y-shaped combat drones forming the YY logo"
+              />
+              <h1 class="tagline">war machines</h1>
+            </div>
+            <div class="header-review stage-action">
+              <button
+                id="btn-ignite"
+                class="primary command-button review-command"
+                aria-haspopup="dialog"
+              >
+                <span class="command-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="4"></circle>
+                    <path d="M12 2v5M12 17v5M2 12h5M17 12h5M8.5 8.5l7 7"></path>
+                  </svg>
+                </span>
+                <span class="command-copy">
+                  <small>council command</small>
+                  <strong>Review Matter</strong>
+                </span>
+                <span class="command-chevron" aria-hidden="true">›</span>
+              </button>
+              <button id="btn-hold" class="primary command-button war-command hidden">
+                <span class="command-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M7 5h3v14H7zM14 5h3v14h-3z"></path>
+                  </svg>
+                </span>
+                <span class="command-copy">
+                  <small>battle control</small>
+                  <strong class="command-label">Hold War</strong>
+                </span>
+                <span class="command-chevron" aria-hidden="true">›</span>
+              </button>
+            </div>
+            <section class="nation" id="panel-west" aria-label="Aurelia status"></section>
+            <section class="nation" id="panel-east" aria-label="Korsav status"></section>
+            <!-- The top-right dock collapses to one small question-mark control. -->
+            <div class="status stage-status collapsed" id="status-dock">
+              <div class="status-content" id="status-controls">
+                <!-- The bench only appears when a recording is loaded. -->
+                <div class="replay hidden" id="replay">
+                  <select id="replay-pick" title="which recorded match is playing"></select>
+                  <select id="replay-seek" title="jump straight to a turn"></select>
+                  <select id="replay-speed" title="playback speed">
+                    <option value="0.5">0.5×</option>
+                    <option value="1">1×</option>
+                    <option value="2">2×</option>
+                    <option value="4">4×</option>
+                    <option value="8">8×</option>
+                    <option value="16">16×</option>
+                  </select>
+                </div>
+                <span id="mode" class="pill">connecting</span>
+                <span id="turn" class="pill">turn 0</span>
+                <span class="pill council-funds" id="council-funds"></span>
+                <span id="phase" class="pill">briefing</span>
+                <button
+                  id="btn-dev"
+                  class="pill ghost hidden"
+                  aria-controls="dev-panel"
+                  aria-pressed="false"
+                  title="inspect live model prompts and responses"
+                >dev view</button>
+                <button
+                  id="btn-sound"
+                  class="pill ghost"
+                  aria-pressed="true"
+                  title="mute ambience, weapon effects, and island voices"
+                >sound on</button>
+                <button id="btn-help" class="pill ghost" title="open the briefing">briefing</button>
+              </div>
+              <button
+                id="btn-status-toggle"
+                class="status-toggle"
+                aria-controls="status-controls"
+                aria-expanded="false"
+                aria-label="show game controls"
+                title="show game controls"
+              >?</button>
+            </div>
             <!-- Speech sits over each island; the world speaks along the bottom. The
                  damage numbers are the panels' job, not the map's. -->
             <div class="bubble west" id="bubble-west"></div>
@@ -160,45 +195,20 @@
           </div>
 
           <section class="controls hidden" id="conflict-controls">
-            <div class="run hidden" id="run-controls">
-              <div class="buttons">
-                <button id="btn-inject" class="primary">add context</button>
-                <button id="btn-hold">hold war</button>
+            <div class="support hidden" id="support-controls">
+              <div class="request-copy">
+                <div class="tag" id="support-kicker">incoming request</div>
+                <p id="support-description"></p>
               </div>
-              <div class="support hidden" id="support-controls">
-                <div class="request-copy">
-                  <div class="tag" id="support-kicker">incoming request</div>
-                  <p id="support-description"></p>
-                </div>
-                <div class="support-row">
-                  <strong id="support-cost"></strong>
-                  <button id="btn-support-decline">not this time</button>
-                  <button id="btn-support" class="primary">send it</button>
-                </div>
+              <div class="support-row">
+                <strong id="support-cost"></strong>
+                <button id="btn-support-decline">not this time</button>
+                <button id="btn-support" class="primary">send it</button>
               </div>
             </div>
           </section>
         </section>
 
-        <section class="nation" id="panel-east"></section>
-
-        <section class="ignition" id="ignition">
-          <h2>everything is perfectly under control</h2>
-          <!-- On the bench the war has already been fought. Reviewing the matter simply
-               starts its recorded prologue. -->
-          <p class="replay-note hidden" id="replay-note"></p>
-          <p class="ignition-copy">
-            Review the dispute, choose the Council's position, and add any conditions
-            you want placed on the record. The adopted resolution may trigger a crisis.
-          </p>
-          <div class="crisis-action">
-            <button
-              id="btn-ignite"
-              class="primary"
-              aria-haspopup="dialog"
-            >Review the Matter</button>
-          </div>
-        </section>
       </main>
     </div>
 
